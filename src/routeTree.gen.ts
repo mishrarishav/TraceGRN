@@ -13,6 +13,7 @@ import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ShellIndexRouteImport } from './routes/_shell.index'
 import { Route as ShellImportRouteImport } from './routes/_shell.import'
+import { Route as ShellInventoryRouteImport } from './routes/_shell.inventory'
 import { Route as ShellInwardRouteImport } from './routes/_shell.inward'
 import { Route as ShellIssueRouteImport } from './routes/_shell.issue'
 import { Route as ShellLabelsRouteImport } from './routes/_shell.labels'
@@ -37,6 +38,11 @@ const ShellIndexRoute = ShellIndexRouteImport.update({
 const ShellImportRoute = ShellImportRouteImport.update({
   id: '/import',
   path: '/import',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellInventoryRoute = ShellInventoryRouteImport.update({
+  id: '/inventory',
+  path: '/inventory',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellInwardRoute = ShellInwardRouteImport.update({
@@ -74,6 +80,7 @@ export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
   '/login': typeof LoginRoute
   '/import': typeof ShellImportRoute
+  '/inventory': typeof ShellInventoryRoute
   '/inward': typeof ShellInwardRoute
   '/issue': typeof ShellIssueRoute
   '/labels': typeof ShellLabelsRoute
@@ -84,6 +91,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/import': typeof ShellImportRoute
+  '/inventory': typeof ShellInventoryRoute
   '/inward': typeof ShellInwardRoute
   '/issue': typeof ShellIssueRoute
   '/labels': typeof ShellLabelsRoute
@@ -97,6 +105,7 @@ export interface FileRoutesById {
   '/_shell': typeof ShellRouteWithChildren
   '/login': typeof LoginRoute
   '/_shell/import': typeof ShellImportRoute
+  '/_shell/inventory': typeof ShellInventoryRoute
   '/_shell/inward': typeof ShellInwardRoute
   '/_shell/issue': typeof ShellIssueRoute
   '/_shell/labels': typeof ShellLabelsRoute
@@ -111,6 +120,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/import'
+    | '/inventory'
     | '/inward'
     | '/issue'
     | '/labels'
@@ -121,6 +131,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/import'
+    | '/inventory'
     | '/inward'
     | '/issue'
     | '/labels'
@@ -133,6 +144,7 @@ export interface FileRouteTypes {
     | '/_shell'
     | '/login'
     | '/_shell/import'
+    | '/_shell/inventory'
     | '/_shell/inward'
     | '/_shell/issue'
     | '/_shell/labels'
@@ -175,6 +187,13 @@ declare module '@tanstack/react-router' {
       path: '/import'
       fullPath: '/import'
       preLoaderRoute: typeof ShellImportRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/inventory': {
+      id: '/_shell/inventory'
+      path: '/inventory'
+      fullPath: '/inventory'
+      preLoaderRoute: typeof ShellInventoryRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/inward': {
@@ -224,6 +243,7 @@ declare module '@tanstack/react-router' {
 
 interface ShellRouteChildren {
   ShellImportRoute: typeof ShellImportRoute
+  ShellInventoryRoute: typeof ShellInventoryRoute
   ShellInwardRoute: typeof ShellInwardRoute
   ShellIssueRoute: typeof ShellIssueRoute
   ShellLabelsRoute: typeof ShellLabelsRoute
@@ -235,6 +255,7 @@ interface ShellRouteChildren {
 
 const ShellRouteChildren: ShellRouteChildren = {
   ShellImportRoute: ShellImportRoute,
+  ShellInventoryRoute: ShellInventoryRoute,
   ShellInwardRoute: ShellInwardRoute,
   ShellIssueRoute: ShellIssueRoute,
   ShellLabelsRoute: ShellLabelsRoute,
