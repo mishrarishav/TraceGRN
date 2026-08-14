@@ -9,50 +9,225 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as ShellRouteImport } from './routes/_shell'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as ShellIndexRouteImport } from './routes/_shell.index'
+import { Route as ShellImportRouteImport } from './routes/_shell.import'
+import { Route as ShellInwardRouteImport } from './routes/_shell.inward'
+import { Route as ShellLabelsRouteImport } from './routes/_shell.labels'
+import { Route as ShellMaterialsRouteImport } from './routes/_shell.materials'
+import { Route as ShellGrnsIndexRouteImport } from './routes/_shell.grns.index'
+import { Route as ShellGrnsIdRouteImport } from './routes/_shell.grns.$id'
 
-const IndexRoute = IndexRouteImport.update({
+const ShellRoute = ShellRouteImport.update({
+  id: '/_shell',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShellIndexRoute = ShellIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellImportRoute = ShellImportRouteImport.update({
+  id: '/import',
+  path: '/import',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellInwardRoute = ShellInwardRouteImport.update({
+  id: '/inward',
+  path: '/inward',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellLabelsRoute = ShellLabelsRouteImport.update({
+  id: '/labels',
+  path: '/labels',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellMaterialsRoute = ShellMaterialsRouteImport.update({
+  id: '/materials',
+  path: '/materials',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellGrnsIndexRoute = ShellGrnsIndexRouteImport.update({
+  id: '/grns/',
+  path: '/grns/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellGrnsIdRoute = ShellGrnsIdRouteImport.update({
+  id: '/grns/$id',
+  path: '/grns/$id',
+  getParentRoute: () => ShellRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof ShellIndexRoute
+  '/login': typeof LoginRoute
+  '/import': typeof ShellImportRoute
+  '/inward': typeof ShellInwardRoute
+  '/labels': typeof ShellLabelsRoute
+  '/materials': typeof ShellMaterialsRoute
+  '/grns/$id': typeof ShellGrnsIdRoute
+  '/grns/': typeof ShellGrnsIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/import': typeof ShellImportRoute
+  '/inward': typeof ShellInwardRoute
+  '/labels': typeof ShellLabelsRoute
+  '/materials': typeof ShellMaterialsRoute
+  '/': typeof ShellIndexRoute
+  '/grns/$id': typeof ShellGrnsIdRoute
+  '/grns': typeof ShellGrnsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_shell': typeof ShellRouteWithChildren
+  '/login': typeof LoginRoute
+  '/_shell/import': typeof ShellImportRoute
+  '/_shell/inward': typeof ShellInwardRoute
+  '/_shell/labels': typeof ShellLabelsRoute
+  '/_shell/materials': typeof ShellMaterialsRoute
+  '/_shell/': typeof ShellIndexRoute
+  '/_shell/grns/$id': typeof ShellGrnsIdRoute
+  '/_shell/grns/': typeof ShellGrnsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/import'
+    | '/inward'
+    | '/labels'
+    | '/materials'
+    | '/grns/$id'
+    | '/grns/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/login'
+    | '/import'
+    | '/inward'
+    | '/labels'
+    | '/materials'
+    | '/'
+    | '/grns/$id'
+    | '/grns'
+  id:
+    | '__root__'
+    | '/_shell'
+    | '/login'
+    | '/_shell/import'
+    | '/_shell/inward'
+    | '/_shell/labels'
+    | '/_shell/materials'
+    | '/_shell/'
+    | '/_shell/grns/$id'
+    | '/_shell/grns/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  ShellRoute: typeof ShellRouteWithChildren
+  LoginRoute: typeof LoginRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_shell': {
+      id: '/_shell'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof ShellRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_shell/': {
+      id: '/_shell/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof ShellIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/import': {
+      id: '/_shell/import'
+      path: '/import'
+      fullPath: '/import'
+      preLoaderRoute: typeof ShellImportRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/inward': {
+      id: '/_shell/inward'
+      path: '/inward'
+      fullPath: '/inward'
+      preLoaderRoute: typeof ShellInwardRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/labels': {
+      id: '/_shell/labels'
+      path: '/labels'
+      fullPath: '/labels'
+      preLoaderRoute: typeof ShellLabelsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/materials': {
+      id: '/_shell/materials'
+      path: '/materials'
+      fullPath: '/materials'
+      preLoaderRoute: typeof ShellMaterialsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/grns/': {
+      id: '/_shell/grns/'
+      path: '/grns'
+      fullPath: '/grns/'
+      preLoaderRoute: typeof ShellGrnsIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/grns/$id': {
+      id: '/_shell/grns/$id'
+      path: '/grns/$id'
+      fullPath: '/grns/$id'
+      preLoaderRoute: typeof ShellGrnsIdRouteImport
+      parentRoute: typeof ShellRoute
     }
   }
 }
 
+interface ShellRouteChildren {
+  ShellImportRoute: typeof ShellImportRoute
+  ShellInwardRoute: typeof ShellInwardRoute
+  ShellLabelsRoute: typeof ShellLabelsRoute
+  ShellMaterialsRoute: typeof ShellMaterialsRoute
+  ShellIndexRoute: typeof ShellIndexRoute
+  ShellGrnsIdRoute: typeof ShellGrnsIdRoute
+  ShellGrnsIndexRoute: typeof ShellGrnsIndexRoute
+}
+
+const ShellRouteChildren: ShellRouteChildren = {
+  ShellImportRoute: ShellImportRoute,
+  ShellInwardRoute: ShellInwardRoute,
+  ShellLabelsRoute: ShellLabelsRoute,
+  ShellMaterialsRoute: ShellMaterialsRoute,
+  ShellIndexRoute: ShellIndexRoute,
+  ShellGrnsIdRoute: ShellGrnsIdRoute,
+  ShellGrnsIndexRoute: ShellGrnsIndexRoute,
+}
+
+const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  ShellRoute: ShellRouteWithChildren,
+  LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
