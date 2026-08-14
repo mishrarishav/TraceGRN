@@ -9,50 +9,435 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as ShellRouteImport } from './routes/_shell'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as ShellIndexRouteImport } from './routes/_shell.index'
+import { Route as ShellAuditRouteImport } from './routes/_shell.audit'
+import { Route as ShellConfigurationRouteImport } from './routes/_shell.configuration'
+import { Route as ShellImportRouteImport } from './routes/_shell.import'
+import { Route as ShellImportHistoryRouteImport } from './routes/_shell.import-history'
+import { Route as ShellInventoryRouteImport } from './routes/_shell.inventory'
+import { Route as ShellInwardRouteImport } from './routes/_shell.inward'
+import { Route as ShellIssueRouteImport } from './routes/_shell.issue'
+import { Route as ShellLabelsRouteImport } from './routes/_shell.labels'
+import { Route as ShellMaterialsRouteImport } from './routes/_shell.materials'
+import { Route as ShellReportsRouteImport } from './routes/_shell.reports'
+import { Route as ShellRevisionsRouteImport } from './routes/_shell.revisions'
+import { Route as ShellStationsRouteImport } from './routes/_shell.stations'
+import { Route as ShellTraceabilityRouteImport } from './routes/_shell.traceability'
+import { Route as ShellUsersRouteImport } from './routes/_shell.users'
+import { Route as ShellGrnsIndexRouteImport } from './routes/_shell.grns.index'
+import { Route as ShellGrnsIdRouteImport } from './routes/_shell.grns.$id'
 
-const IndexRoute = IndexRouteImport.update({
+const ShellRoute = ShellRouteImport.update({
+  id: '/_shell',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShellIndexRoute = ShellIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellAuditRoute = ShellAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellConfigurationRoute = ShellConfigurationRouteImport.update({
+  id: '/configuration',
+  path: '/configuration',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellImportRoute = ShellImportRouteImport.update({
+  id: '/import',
+  path: '/import',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellImportHistoryRoute = ShellImportHistoryRouteImport.update({
+  id: '/import-history',
+  path: '/import-history',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellInventoryRoute = ShellInventoryRouteImport.update({
+  id: '/inventory',
+  path: '/inventory',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellInwardRoute = ShellInwardRouteImport.update({
+  id: '/inward',
+  path: '/inward',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellIssueRoute = ShellIssueRouteImport.update({
+  id: '/issue',
+  path: '/issue',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellLabelsRoute = ShellLabelsRouteImport.update({
+  id: '/labels',
+  path: '/labels',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellMaterialsRoute = ShellMaterialsRouteImport.update({
+  id: '/materials',
+  path: '/materials',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellReportsRoute = ShellReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellRevisionsRoute = ShellRevisionsRouteImport.update({
+  id: '/revisions',
+  path: '/revisions',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellStationsRoute = ShellStationsRouteImport.update({
+  id: '/stations',
+  path: '/stations',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellTraceabilityRoute = ShellTraceabilityRouteImport.update({
+  id: '/traceability',
+  path: '/traceability',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellUsersRoute = ShellUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellGrnsIndexRoute = ShellGrnsIndexRouteImport.update({
+  id: '/grns/',
+  path: '/grns/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellGrnsIdRoute = ShellGrnsIdRouteImport.update({
+  id: '/grns/$id',
+  path: '/grns/$id',
+  getParentRoute: () => ShellRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof ShellIndexRoute
+  '/login': typeof LoginRoute
+  '/audit': typeof ShellAuditRoute
+  '/configuration': typeof ShellConfigurationRoute
+  '/import': typeof ShellImportRoute
+  '/import-history': typeof ShellImportHistoryRoute
+  '/inventory': typeof ShellInventoryRoute
+  '/inward': typeof ShellInwardRoute
+  '/issue': typeof ShellIssueRoute
+  '/labels': typeof ShellLabelsRoute
+  '/materials': typeof ShellMaterialsRoute
+  '/reports': typeof ShellReportsRoute
+  '/revisions': typeof ShellRevisionsRoute
+  '/stations': typeof ShellStationsRoute
+  '/traceability': typeof ShellTraceabilityRoute
+  '/users': typeof ShellUsersRoute
+  '/grns/$id': typeof ShellGrnsIdRoute
+  '/grns/': typeof ShellGrnsIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/audit': typeof ShellAuditRoute
+  '/configuration': typeof ShellConfigurationRoute
+  '/import': typeof ShellImportRoute
+  '/import-history': typeof ShellImportHistoryRoute
+  '/inventory': typeof ShellInventoryRoute
+  '/inward': typeof ShellInwardRoute
+  '/issue': typeof ShellIssueRoute
+  '/labels': typeof ShellLabelsRoute
+  '/materials': typeof ShellMaterialsRoute
+  '/reports': typeof ShellReportsRoute
+  '/revisions': typeof ShellRevisionsRoute
+  '/stations': typeof ShellStationsRoute
+  '/traceability': typeof ShellTraceabilityRoute
+  '/users': typeof ShellUsersRoute
+  '/': typeof ShellIndexRoute
+  '/grns/$id': typeof ShellGrnsIdRoute
+  '/grns': typeof ShellGrnsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_shell': typeof ShellRouteWithChildren
+  '/login': typeof LoginRoute
+  '/_shell/audit': typeof ShellAuditRoute
+  '/_shell/configuration': typeof ShellConfigurationRoute
+  '/_shell/import': typeof ShellImportRoute
+  '/_shell/import-history': typeof ShellImportHistoryRoute
+  '/_shell/inventory': typeof ShellInventoryRoute
+  '/_shell/inward': typeof ShellInwardRoute
+  '/_shell/issue': typeof ShellIssueRoute
+  '/_shell/labels': typeof ShellLabelsRoute
+  '/_shell/materials': typeof ShellMaterialsRoute
+  '/_shell/reports': typeof ShellReportsRoute
+  '/_shell/revisions': typeof ShellRevisionsRoute
+  '/_shell/stations': typeof ShellStationsRoute
+  '/_shell/traceability': typeof ShellTraceabilityRoute
+  '/_shell/users': typeof ShellUsersRoute
+  '/_shell/': typeof ShellIndexRoute
+  '/_shell/grns/$id': typeof ShellGrnsIdRoute
+  '/_shell/grns/': typeof ShellGrnsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/audit'
+    | '/configuration'
+    | '/import'
+    | '/import-history'
+    | '/inventory'
+    | '/inward'
+    | '/issue'
+    | '/labels'
+    | '/materials'
+    | '/reports'
+    | '/revisions'
+    | '/stations'
+    | '/traceability'
+    | '/users'
+    | '/grns/$id'
+    | '/grns/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/login'
+    | '/audit'
+    | '/configuration'
+    | '/import'
+    | '/import-history'
+    | '/inventory'
+    | '/inward'
+    | '/issue'
+    | '/labels'
+    | '/materials'
+    | '/reports'
+    | '/revisions'
+    | '/stations'
+    | '/traceability'
+    | '/users'
+    | '/'
+    | '/grns/$id'
+    | '/grns'
+  id:
+    | '__root__'
+    | '/_shell'
+    | '/login'
+    | '/_shell/audit'
+    | '/_shell/configuration'
+    | '/_shell/import'
+    | '/_shell/import-history'
+    | '/_shell/inventory'
+    | '/_shell/inward'
+    | '/_shell/issue'
+    | '/_shell/labels'
+    | '/_shell/materials'
+    | '/_shell/reports'
+    | '/_shell/revisions'
+    | '/_shell/stations'
+    | '/_shell/traceability'
+    | '/_shell/users'
+    | '/_shell/'
+    | '/_shell/grns/$id'
+    | '/_shell/grns/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  ShellRoute: typeof ShellRouteWithChildren
+  LoginRoute: typeof LoginRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_shell': {
+      id: '/_shell'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof ShellRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_shell/': {
+      id: '/_shell/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof ShellIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/audit': {
+      id: '/_shell/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof ShellAuditRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/configuration': {
+      id: '/_shell/configuration'
+      path: '/configuration'
+      fullPath: '/configuration'
+      preLoaderRoute: typeof ShellConfigurationRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/import': {
+      id: '/_shell/import'
+      path: '/import'
+      fullPath: '/import'
+      preLoaderRoute: typeof ShellImportRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/import-history': {
+      id: '/_shell/import-history'
+      path: '/import-history'
+      fullPath: '/import-history'
+      preLoaderRoute: typeof ShellImportHistoryRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/inventory': {
+      id: '/_shell/inventory'
+      path: '/inventory'
+      fullPath: '/inventory'
+      preLoaderRoute: typeof ShellInventoryRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/inward': {
+      id: '/_shell/inward'
+      path: '/inward'
+      fullPath: '/inward'
+      preLoaderRoute: typeof ShellInwardRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/issue': {
+      id: '/_shell/issue'
+      path: '/issue'
+      fullPath: '/issue'
+      preLoaderRoute: typeof ShellIssueRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/labels': {
+      id: '/_shell/labels'
+      path: '/labels'
+      fullPath: '/labels'
+      preLoaderRoute: typeof ShellLabelsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/materials': {
+      id: '/_shell/materials'
+      path: '/materials'
+      fullPath: '/materials'
+      preLoaderRoute: typeof ShellMaterialsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/reports': {
+      id: '/_shell/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof ShellReportsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/revisions': {
+      id: '/_shell/revisions'
+      path: '/revisions'
+      fullPath: '/revisions'
+      preLoaderRoute: typeof ShellRevisionsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/stations': {
+      id: '/_shell/stations'
+      path: '/stations'
+      fullPath: '/stations'
+      preLoaderRoute: typeof ShellStationsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/traceability': {
+      id: '/_shell/traceability'
+      path: '/traceability'
+      fullPath: '/traceability'
+      preLoaderRoute: typeof ShellTraceabilityRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/users': {
+      id: '/_shell/users'
+      path: '/users'
+      fullPath: '/users'
+      preLoaderRoute: typeof ShellUsersRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/grns/': {
+      id: '/_shell/grns/'
+      path: '/grns'
+      fullPath: '/grns/'
+      preLoaderRoute: typeof ShellGrnsIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/grns/$id': {
+      id: '/_shell/grns/$id'
+      path: '/grns/$id'
+      fullPath: '/grns/$id'
+      preLoaderRoute: typeof ShellGrnsIdRouteImport
+      parentRoute: typeof ShellRoute
     }
   }
 }
 
+interface ShellRouteChildren {
+  ShellAuditRoute: typeof ShellAuditRoute
+  ShellConfigurationRoute: typeof ShellConfigurationRoute
+  ShellImportRoute: typeof ShellImportRoute
+  ShellImportHistoryRoute: typeof ShellImportHistoryRoute
+  ShellInventoryRoute: typeof ShellInventoryRoute
+  ShellInwardRoute: typeof ShellInwardRoute
+  ShellIssueRoute: typeof ShellIssueRoute
+  ShellLabelsRoute: typeof ShellLabelsRoute
+  ShellMaterialsRoute: typeof ShellMaterialsRoute
+  ShellReportsRoute: typeof ShellReportsRoute
+  ShellRevisionsRoute: typeof ShellRevisionsRoute
+  ShellStationsRoute: typeof ShellStationsRoute
+  ShellTraceabilityRoute: typeof ShellTraceabilityRoute
+  ShellUsersRoute: typeof ShellUsersRoute
+  ShellIndexRoute: typeof ShellIndexRoute
+  ShellGrnsIdRoute: typeof ShellGrnsIdRoute
+  ShellGrnsIndexRoute: typeof ShellGrnsIndexRoute
+}
+
+const ShellRouteChildren: ShellRouteChildren = {
+  ShellAuditRoute: ShellAuditRoute,
+  ShellConfigurationRoute: ShellConfigurationRoute,
+  ShellImportRoute: ShellImportRoute,
+  ShellImportHistoryRoute: ShellImportHistoryRoute,
+  ShellInventoryRoute: ShellInventoryRoute,
+  ShellInwardRoute: ShellInwardRoute,
+  ShellIssueRoute: ShellIssueRoute,
+  ShellLabelsRoute: ShellLabelsRoute,
+  ShellMaterialsRoute: ShellMaterialsRoute,
+  ShellReportsRoute: ShellReportsRoute,
+  ShellRevisionsRoute: ShellRevisionsRoute,
+  ShellStationsRoute: ShellStationsRoute,
+  ShellTraceabilityRoute: ShellTraceabilityRoute,
+  ShellUsersRoute: ShellUsersRoute,
+  ShellIndexRoute: ShellIndexRoute,
+  ShellGrnsIdRoute: ShellGrnsIdRoute,
+  ShellGrnsIndexRoute: ShellGrnsIndexRoute,
+}
+
+const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  ShellRoute: ShellRouteWithChildren,
+  LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

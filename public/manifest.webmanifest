@@ -1,0 +1,13 @@
+{
+  "name": "TraceFlow — Material Traceability System",
+  "short_name": "TraceFlow",
+  "description": "Material traceability from SAP GRN import to store-to-production issue.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#1f4fd8",
+  "orientation": "any",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "48x48", "type": "image/x-icon" }
+  ]
+}
