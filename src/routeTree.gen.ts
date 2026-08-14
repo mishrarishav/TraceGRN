@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ShellIndexRouteImport } from './routes/_shell.index'
+import { Route as ShellAuditRouteImport } from './routes/_shell.audit'
 import { Route as ShellImportRouteImport } from './routes/_shell.import'
 import { Route as ShellImportHistoryRouteImport } from './routes/_shell.import-history'
 import { Route as ShellInventoryRouteImport } from './routes/_shell.inventory'
@@ -20,7 +21,10 @@ import { Route as ShellIssueRouteImport } from './routes/_shell.issue'
 import { Route as ShellLabelsRouteImport } from './routes/_shell.labels'
 import { Route as ShellMaterialsRouteImport } from './routes/_shell.materials'
 import { Route as ShellReportsRouteImport } from './routes/_shell.reports'
+import { Route as ShellRevisionsRouteImport } from './routes/_shell.revisions'
+import { Route as ShellStationsRouteImport } from './routes/_shell.stations'
 import { Route as ShellTraceabilityRouteImport } from './routes/_shell.traceability'
+import { Route as ShellUsersRouteImport } from './routes/_shell.users'
 import { Route as ShellGrnsIndexRouteImport } from './routes/_shell.grns.index'
 import { Route as ShellGrnsIdRouteImport } from './routes/_shell.grns.$id'
 
@@ -36,6 +40,11 @@ const LoginRoute = LoginRouteImport.update({
 const ShellIndexRoute = ShellIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellAuditRoute = ShellAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellImportRoute = ShellImportRouteImport.update({
@@ -78,9 +87,24 @@ const ShellReportsRoute = ShellReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellRevisionsRoute = ShellRevisionsRouteImport.update({
+  id: '/revisions',
+  path: '/revisions',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellStationsRoute = ShellStationsRouteImport.update({
+  id: '/stations',
+  path: '/stations',
+  getParentRoute: () => ShellRoute,
+} as any)
 const ShellTraceabilityRoute = ShellTraceabilityRouteImport.update({
   id: '/traceability',
   path: '/traceability',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellUsersRoute = ShellUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellGrnsIndexRoute = ShellGrnsIndexRouteImport.update({
@@ -97,6 +121,7 @@ const ShellGrnsIdRoute = ShellGrnsIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
   '/login': typeof LoginRoute
+  '/audit': typeof ShellAuditRoute
   '/import': typeof ShellImportRoute
   '/import-history': typeof ShellImportHistoryRoute
   '/inventory': typeof ShellInventoryRoute
@@ -105,12 +130,16 @@ export interface FileRoutesByFullPath {
   '/labels': typeof ShellLabelsRoute
   '/materials': typeof ShellMaterialsRoute
   '/reports': typeof ShellReportsRoute
+  '/revisions': typeof ShellRevisionsRoute
+  '/stations': typeof ShellStationsRoute
   '/traceability': typeof ShellTraceabilityRoute
+  '/users': typeof ShellUsersRoute
   '/grns/$id': typeof ShellGrnsIdRoute
   '/grns/': typeof ShellGrnsIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/audit': typeof ShellAuditRoute
   '/import': typeof ShellImportRoute
   '/import-history': typeof ShellImportHistoryRoute
   '/inventory': typeof ShellInventoryRoute
@@ -119,7 +148,10 @@ export interface FileRoutesByTo {
   '/labels': typeof ShellLabelsRoute
   '/materials': typeof ShellMaterialsRoute
   '/reports': typeof ShellReportsRoute
+  '/revisions': typeof ShellRevisionsRoute
+  '/stations': typeof ShellStationsRoute
   '/traceability': typeof ShellTraceabilityRoute
+  '/users': typeof ShellUsersRoute
   '/': typeof ShellIndexRoute
   '/grns/$id': typeof ShellGrnsIdRoute
   '/grns': typeof ShellGrnsIndexRoute
@@ -128,6 +160,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_shell': typeof ShellRouteWithChildren
   '/login': typeof LoginRoute
+  '/_shell/audit': typeof ShellAuditRoute
   '/_shell/import': typeof ShellImportRoute
   '/_shell/import-history': typeof ShellImportHistoryRoute
   '/_shell/inventory': typeof ShellInventoryRoute
@@ -136,7 +169,10 @@ export interface FileRoutesById {
   '/_shell/labels': typeof ShellLabelsRoute
   '/_shell/materials': typeof ShellMaterialsRoute
   '/_shell/reports': typeof ShellReportsRoute
+  '/_shell/revisions': typeof ShellRevisionsRoute
+  '/_shell/stations': typeof ShellStationsRoute
   '/_shell/traceability': typeof ShellTraceabilityRoute
+  '/_shell/users': typeof ShellUsersRoute
   '/_shell/': typeof ShellIndexRoute
   '/_shell/grns/$id': typeof ShellGrnsIdRoute
   '/_shell/grns/': typeof ShellGrnsIndexRoute
@@ -146,6 +182,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/audit'
     | '/import'
     | '/import-history'
     | '/inventory'
@@ -154,12 +191,16 @@ export interface FileRouteTypes {
     | '/labels'
     | '/materials'
     | '/reports'
+    | '/revisions'
+    | '/stations'
     | '/traceability'
+    | '/users'
     | '/grns/$id'
     | '/grns/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/audit'
     | '/import'
     | '/import-history'
     | '/inventory'
@@ -168,7 +209,10 @@ export interface FileRouteTypes {
     | '/labels'
     | '/materials'
     | '/reports'
+    | '/revisions'
+    | '/stations'
     | '/traceability'
+    | '/users'
     | '/'
     | '/grns/$id'
     | '/grns'
@@ -176,6 +220,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_shell'
     | '/login'
+    | '/_shell/audit'
     | '/_shell/import'
     | '/_shell/import-history'
     | '/_shell/inventory'
@@ -184,7 +229,10 @@ export interface FileRouteTypes {
     | '/_shell/labels'
     | '/_shell/materials'
     | '/_shell/reports'
+    | '/_shell/revisions'
+    | '/_shell/stations'
     | '/_shell/traceability'
+    | '/_shell/users'
     | '/_shell/'
     | '/_shell/grns/$id'
     | '/_shell/grns/'
@@ -216,6 +264,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof ShellIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/audit': {
+      id: '/_shell/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof ShellAuditRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/import': {
@@ -274,11 +329,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellReportsRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/revisions': {
+      id: '/_shell/revisions'
+      path: '/revisions'
+      fullPath: '/revisions'
+      preLoaderRoute: typeof ShellRevisionsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/stations': {
+      id: '/_shell/stations'
+      path: '/stations'
+      fullPath: '/stations'
+      preLoaderRoute: typeof ShellStationsRouteImport
+      parentRoute: typeof ShellRoute
+    }
     '/_shell/traceability': {
       id: '/_shell/traceability'
       path: '/traceability'
       fullPath: '/traceability'
       preLoaderRoute: typeof ShellTraceabilityRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/users': {
+      id: '/_shell/users'
+      path: '/users'
+      fullPath: '/users'
+      preLoaderRoute: typeof ShellUsersRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/grns/': {
@@ -299,6 +375,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface ShellRouteChildren {
+  ShellAuditRoute: typeof ShellAuditRoute
   ShellImportRoute: typeof ShellImportRoute
   ShellImportHistoryRoute: typeof ShellImportHistoryRoute
   ShellInventoryRoute: typeof ShellInventoryRoute
@@ -307,13 +384,17 @@ interface ShellRouteChildren {
   ShellLabelsRoute: typeof ShellLabelsRoute
   ShellMaterialsRoute: typeof ShellMaterialsRoute
   ShellReportsRoute: typeof ShellReportsRoute
+  ShellRevisionsRoute: typeof ShellRevisionsRoute
+  ShellStationsRoute: typeof ShellStationsRoute
   ShellTraceabilityRoute: typeof ShellTraceabilityRoute
+  ShellUsersRoute: typeof ShellUsersRoute
   ShellIndexRoute: typeof ShellIndexRoute
   ShellGrnsIdRoute: typeof ShellGrnsIdRoute
   ShellGrnsIndexRoute: typeof ShellGrnsIndexRoute
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
+  ShellAuditRoute: ShellAuditRoute,
   ShellImportRoute: ShellImportRoute,
   ShellImportHistoryRoute: ShellImportHistoryRoute,
   ShellInventoryRoute: ShellInventoryRoute,
@@ -322,7 +403,10 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellLabelsRoute: ShellLabelsRoute,
   ShellMaterialsRoute: ShellMaterialsRoute,
   ShellReportsRoute: ShellReportsRoute,
+  ShellRevisionsRoute: ShellRevisionsRoute,
+  ShellStationsRoute: ShellStationsRoute,
   ShellTraceabilityRoute: ShellTraceabilityRoute,
+  ShellUsersRoute: ShellUsersRoute,
   ShellIndexRoute: ShellIndexRoute,
   ShellGrnsIdRoute: ShellGrnsIdRoute,
   ShellGrnsIndexRoute: ShellGrnsIndexRoute,
