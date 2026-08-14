@@ -18,6 +18,7 @@ import { Route as ShellInwardRouteImport } from './routes/_shell.inward'
 import { Route as ShellIssueRouteImport } from './routes/_shell.issue'
 import { Route as ShellLabelsRouteImport } from './routes/_shell.labels'
 import { Route as ShellMaterialsRouteImport } from './routes/_shell.materials'
+import { Route as ShellReportsRouteImport } from './routes/_shell.reports'
 import { Route as ShellTraceabilityRouteImport } from './routes/_shell.traceability'
 import { Route as ShellGrnsIndexRouteImport } from './routes/_shell.grns.index'
 import { Route as ShellGrnsIdRouteImport } from './routes/_shell.grns.$id'
@@ -66,6 +67,11 @@ const ShellMaterialsRoute = ShellMaterialsRouteImport.update({
   path: '/materials',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellReportsRoute = ShellReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => ShellRoute,
+} as any)
 const ShellTraceabilityRoute = ShellTraceabilityRouteImport.update({
   id: '/traceability',
   path: '/traceability',
@@ -91,6 +97,7 @@ export interface FileRoutesByFullPath {
   '/issue': typeof ShellIssueRoute
   '/labels': typeof ShellLabelsRoute
   '/materials': typeof ShellMaterialsRoute
+  '/reports': typeof ShellReportsRoute
   '/traceability': typeof ShellTraceabilityRoute
   '/grns/$id': typeof ShellGrnsIdRoute
   '/grns/': typeof ShellGrnsIndexRoute
@@ -103,6 +110,7 @@ export interface FileRoutesByTo {
   '/issue': typeof ShellIssueRoute
   '/labels': typeof ShellLabelsRoute
   '/materials': typeof ShellMaterialsRoute
+  '/reports': typeof ShellReportsRoute
   '/traceability': typeof ShellTraceabilityRoute
   '/': typeof ShellIndexRoute
   '/grns/$id': typeof ShellGrnsIdRoute
@@ -118,6 +126,7 @@ export interface FileRoutesById {
   '/_shell/issue': typeof ShellIssueRoute
   '/_shell/labels': typeof ShellLabelsRoute
   '/_shell/materials': typeof ShellMaterialsRoute
+  '/_shell/reports': typeof ShellReportsRoute
   '/_shell/traceability': typeof ShellTraceabilityRoute
   '/_shell/': typeof ShellIndexRoute
   '/_shell/grns/$id': typeof ShellGrnsIdRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/issue'
     | '/labels'
     | '/materials'
+    | '/reports'
     | '/traceability'
     | '/grns/$id'
     | '/grns/'
@@ -146,6 +156,7 @@ export interface FileRouteTypes {
     | '/issue'
     | '/labels'
     | '/materials'
+    | '/reports'
     | '/traceability'
     | '/'
     | '/grns/$id'
@@ -160,6 +171,7 @@ export interface FileRouteTypes {
     | '/_shell/issue'
     | '/_shell/labels'
     | '/_shell/materials'
+    | '/_shell/reports'
     | '/_shell/traceability'
     | '/_shell/'
     | '/_shell/grns/$id'
@@ -236,6 +248,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellMaterialsRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/reports': {
+      id: '/_shell/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof ShellReportsRouteImport
+      parentRoute: typeof ShellRoute
+    }
     '/_shell/traceability': {
       id: '/_shell/traceability'
       path: '/traceability'
@@ -267,6 +286,7 @@ interface ShellRouteChildren {
   ShellIssueRoute: typeof ShellIssueRoute
   ShellLabelsRoute: typeof ShellLabelsRoute
   ShellMaterialsRoute: typeof ShellMaterialsRoute
+  ShellReportsRoute: typeof ShellReportsRoute
   ShellTraceabilityRoute: typeof ShellTraceabilityRoute
   ShellIndexRoute: typeof ShellIndexRoute
   ShellGrnsIdRoute: typeof ShellGrnsIdRoute
@@ -280,6 +300,7 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellIssueRoute: ShellIssueRoute,
   ShellLabelsRoute: ShellLabelsRoute,
   ShellMaterialsRoute: ShellMaterialsRoute,
+  ShellReportsRoute: ShellReportsRoute,
   ShellTraceabilityRoute: ShellTraceabilityRoute,
   ShellIndexRoute: ShellIndexRoute,
   ShellGrnsIdRoute: ShellGrnsIdRoute,
