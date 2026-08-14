@@ -13,6 +13,7 @@ import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ShellIndexRouteImport } from './routes/_shell.index'
 import { Route as ShellAuditRouteImport } from './routes/_shell.audit'
+import { Route as ShellConfigurationRouteImport } from './routes/_shell.configuration'
 import { Route as ShellImportRouteImport } from './routes/_shell.import'
 import { Route as ShellImportHistoryRouteImport } from './routes/_shell.import-history'
 import { Route as ShellInventoryRouteImport } from './routes/_shell.inventory'
@@ -45,6 +46,11 @@ const ShellIndexRoute = ShellIndexRouteImport.update({
 const ShellAuditRoute = ShellAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellConfigurationRoute = ShellConfigurationRouteImport.update({
+  id: '/configuration',
+  path: '/configuration',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellImportRoute = ShellImportRouteImport.update({
@@ -122,6 +128,7 @@ export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
   '/login': typeof LoginRoute
   '/audit': typeof ShellAuditRoute
+  '/configuration': typeof ShellConfigurationRoute
   '/import': typeof ShellImportRoute
   '/import-history': typeof ShellImportHistoryRoute
   '/inventory': typeof ShellInventoryRoute
@@ -140,6 +147,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/audit': typeof ShellAuditRoute
+  '/configuration': typeof ShellConfigurationRoute
   '/import': typeof ShellImportRoute
   '/import-history': typeof ShellImportHistoryRoute
   '/inventory': typeof ShellInventoryRoute
@@ -161,6 +169,7 @@ export interface FileRoutesById {
   '/_shell': typeof ShellRouteWithChildren
   '/login': typeof LoginRoute
   '/_shell/audit': typeof ShellAuditRoute
+  '/_shell/configuration': typeof ShellConfigurationRoute
   '/_shell/import': typeof ShellImportRoute
   '/_shell/import-history': typeof ShellImportHistoryRoute
   '/_shell/inventory': typeof ShellInventoryRoute
@@ -183,6 +192,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/audit'
+    | '/configuration'
     | '/import'
     | '/import-history'
     | '/inventory'
@@ -201,6 +211,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/audit'
+    | '/configuration'
     | '/import'
     | '/import-history'
     | '/inventory'
@@ -221,6 +232,7 @@ export interface FileRouteTypes {
     | '/_shell'
     | '/login'
     | '/_shell/audit'
+    | '/_shell/configuration'
     | '/_shell/import'
     | '/_shell/import-history'
     | '/_shell/inventory'
@@ -271,6 +283,13 @@ declare module '@tanstack/react-router' {
       path: '/audit'
       fullPath: '/audit'
       preLoaderRoute: typeof ShellAuditRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/configuration': {
+      id: '/_shell/configuration'
+      path: '/configuration'
+      fullPath: '/configuration'
+      preLoaderRoute: typeof ShellConfigurationRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/import': {
@@ -376,6 +395,7 @@ declare module '@tanstack/react-router' {
 
 interface ShellRouteChildren {
   ShellAuditRoute: typeof ShellAuditRoute
+  ShellConfigurationRoute: typeof ShellConfigurationRoute
   ShellImportRoute: typeof ShellImportRoute
   ShellImportHistoryRoute: typeof ShellImportHistoryRoute
   ShellInventoryRoute: typeof ShellInventoryRoute
@@ -395,6 +415,7 @@ interface ShellRouteChildren {
 
 const ShellRouteChildren: ShellRouteChildren = {
   ShellAuditRoute: ShellAuditRoute,
+  ShellConfigurationRoute: ShellConfigurationRoute,
   ShellImportRoute: ShellImportRoute,
   ShellImportHistoryRoute: ShellImportHistoryRoute,
   ShellInventoryRoute: ShellInventoryRoute,
