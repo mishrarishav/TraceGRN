@@ -1,0 +1,8 @@
+USE [master];
+GO
+
+IF DB_ID(N'TrackGRN') IS NULL
+BEGIN
+    CREATE DATABASE [TrackGRN];
+END;
+GO

@@ -15,6 +15,17 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
+bin/
+obj/
+TestResults/
+UItrackGRN/test-results/
+UItrackGRN/playwright-report/
+APItrackGRN/logs/
+appsettings.Local.json
+APItrackGRN/src/APItrackGRN.Api/appsettings.Development.json
+.env
+.env.*
+!.env.example
 
 # Wrangler / Cloudflare
 .wrangler/
@@ -28,5 +39,4 @@ dist-ssr
 *.suo
 *.ntvs*
 *.njsproj
-*.sln
 *.sw?
