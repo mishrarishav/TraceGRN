@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { publicUrl } from "@/lib/public-url";
 
 export function AppLogo({
   compact = false,
@@ -12,7 +13,7 @@ export function AppLogo({
   if (compact) {
     return (
       <img
-        src="/favicon.ico"
+        src={publicUrl("favicon.ico")}
         alt="TrackGRN"
         width={40}
         height={40}
@@ -32,7 +33,7 @@ export function AppLogo({
       aria-label="TrackGRN"
     >
       <img
-        src="/branding/AppLogo.png"
+        src={publicUrl("branding/AppLogo.png")}
         alt=""
         loading={priority ? "eager" : "lazy"}
         className="pointer-events-none absolute inset-x-0 top-0 w-full max-w-none -translate-y-[27%] select-none"

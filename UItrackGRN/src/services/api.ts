@@ -15,7 +15,7 @@ import type {
 } from "@/types";
 import { createRuntimeId } from "@/lib/id";
 
-export const API_BASE_URL = import.meta.env["VITE_API_BASE_URL"] ?? "/api";
+export const API_BASE_URL = import.meta.env["VITE_API_BASE_URL"] || "/api";
 export const PRINT_AGENT_INSTALLER_URL = `${API_BASE_URL.replace(/\/api\/?$/, "")}/downloads/TrackGRN-PrintAgent.msi`;
 export const APP_VERSION = "1.1.2";
 const ACCESS_TOKEN_KEY = "trackgrn-access-token";

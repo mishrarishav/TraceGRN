@@ -7,9 +7,13 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 const apiProxy = process.env["TRACKGRN_API_PROXY"] ?? "http://127.0.0.1:5025";
+const githubPages = process.env["TRACKGRN_GITHUB_PAGES"] === "1";
+const githubPagesBasePath = "/TraceGRN";
 
 export default defineConfig({
+  nitro: githubPages ? false : undefined,
   vite: {
+    base: githubPages ? `${githubPagesBasePath}/` : "/",
     server: {
       proxy: {
         "/api": apiProxy,
@@ -19,6 +23,14 @@ export default defineConfig({
     },
   },
   tanstackStart: {
+    router: githubPages ? { basepath: githubPagesBasePath } : undefined,
+    spa: githubPages
+      ? {
+          enabled: true,
+          maskPath: "/",
+          prerender: { outputPath: "/404", crawlLinks: false },
+        }
+      : undefined,
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
     server: { entry: "server" },

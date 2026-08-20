@@ -14,6 +14,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { publicUrl } from "../lib/public-url";
 
 function NotFoundComponent() {
   return (
@@ -64,7 +65,7 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
             Try again
           </button>
           <a
-            href="/"
+            href={publicUrl()}
             className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
           >
             Go home
@@ -102,8 +103,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: appCss,
       },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
-      { rel: "manifest", href: "/manifest.webmanifest" },
+      { rel: "icon", href: publicUrl("favicon.ico"), type: "image/x-icon" },
+      { rel: "manifest", href: publicUrl("manifest.webmanifest") },
       {
         rel: "stylesheet",
         href: "https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
@@ -137,7 +138,7 @@ function RootComponent() {
     document.documentElement.dataset["hydrated"] = "true";
 
     if ("serviceWorker" in navigator && import.meta.env.PROD) {
-      void navigator.serviceWorker.register("/sw.js");
+      void navigator.serviceWorker.register(publicUrl("sw.js"));
     }
 
     return () => {

@@ -1,5 +1,11 @@
-const CACHE_NAME = "trackgrn-shell-v1";
-const APP_SHELL = ["/", "/login", "/manifest.webmanifest", "/favicon.ico"];
+const CACHE_NAME = "trackgrn-shell-v2";
+const APP_BASE = new URL("./", self.registration.scope).pathname.replace(/\/$/, "");
+const appUrl = (path = "") => `${APP_BASE}/${path.replace(/^\/+/, "")}`;
+const APP_SHELL = [
+  appUrl(),
+  appUrl("manifest.webmanifest"),
+  appUrl("favicon.ico"),
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
@@ -32,7 +38,7 @@ self.addEventListener("fetch", (event) => {
       .catch(async () => {
         const cached = await caches.match(event.request);
         if (cached) return cached;
-        if (event.request.mode === "navigate") return await caches.match("/");
+        if (event.request.mode === "navigate") return await caches.match(appUrl());
         return Response.error();
       }),
   );

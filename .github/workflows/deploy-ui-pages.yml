@@ -1,0 +1,66 @@
+name: Deploy TrackGRN UI to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - agent/deploy-github-pages
+    paths:
+      - "UItrackGRN/**"
+      - ".github/workflows/deploy-ui-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: UItrackGRN/package-lock.json
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: UItrackGRN
+
+      - name: Build static GitHub Pages UI
+        run: npm run build:pages
+        working-directory: UItrackGRN
+        env:
+          TRACKGRN_GITHUB_PAGES: "1"
+          VITE_API_BASE_URL: ${{ vars.TRACKGRN_PUBLIC_API_URL }}
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: UItrackGRN/dist/client
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

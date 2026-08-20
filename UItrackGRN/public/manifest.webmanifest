@@ -2,12 +2,11 @@
   "name": "TrackGRN — Material Traceability System",
   "short_name": "TrackGRN",
   "description": "Material traceability from SAP GRN import to store-to-production issue.",
-  "start_url": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#1f4fd8",
   "orientation": "any",
-  "icons": [
-    { "src": "/favicon.ico", "sizes": "48x48", "type": "image/x-icon" }
-  ]
+  "icons": [{ "src": "favicon.ico", "sizes": "48x48", "type": "image/x-icon" }]
 }
