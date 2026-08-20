@@ -1,11 +1,7 @@
 const CACHE_NAME = "trackgrn-shell-v2";
 const APP_BASE = new URL("./", self.registration.scope).pathname.replace(/\/$/, "");
 const appUrl = (path = "") => `${APP_BASE}/${path.replace(/^\/+/, "")}`;
-const APP_SHELL = [
-  appUrl(),
-  appUrl("manifest.webmanifest"),
-  appUrl("favicon.ico"),
-];
+const APP_SHELL = [appUrl(), appUrl("manifest.webmanifest"), appUrl("favicon.ico")];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
