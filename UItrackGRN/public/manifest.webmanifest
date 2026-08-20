@@ -1,6 +1,6 @@
 {
-  "name": "TraceFlow — Material Traceability System",
-  "short_name": "TraceFlow",
+  "name": "TrackGRN — Material Traceability System",
+  "short_name": "TrackGRN",
   "description": "Material traceability from SAP GRN import to store-to-production issue.",
   "start_url": "/",
   "display": "standalone",

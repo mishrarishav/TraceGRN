@@ -16,7 +16,10 @@ export function SidebarNav({
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   return (
-    <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-2 py-4">
+    <nav
+      data-testid="sidebar-scroll"
+      className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-2 py-4"
+    >
       {navGroups.map((group) => (
         <div key={group}>
           {!collapsed ? (
@@ -72,7 +75,7 @@ export function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onTogg
   return (
     <aside
       className={cn(
-        "hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 lg:flex",
+        "hidden h-dvh shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar transition-[width] duration-200 lg:flex",
         collapsed ? "w-[72px]" : "w-64",
       )}
     >

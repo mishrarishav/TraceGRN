@@ -188,7 +188,7 @@ test.describe("annotated documentation evidence", () => {
         label: "2. Duplicate inward policy",
       },
       {
-        locator: page.getByText(/Issue scans are online-only/),
+        locator: page.getByText(/Issue remains online-only/),
         label: "3. No offline issue queue",
       },
       {

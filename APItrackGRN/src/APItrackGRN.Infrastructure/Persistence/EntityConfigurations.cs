@@ -54,7 +54,32 @@ internal sealed class MaterialConfiguration : IEntityTypeConfiguration<Material>
         builder.Property(x => x.Description).HasMaxLength(500).IsRequired();
         builder.Property(x => x.Uom).HasColumnName("UOM").HasMaxLength(20).IsRequired();
         builder.Property(x => x.DefaultPackingStandard).HasPrecision(18, 4);
+        builder.Property(x => x.PartNumber).HasMaxLength(100);
+        builder.Property(x => x.DefaultBinLocation).HasMaxLength(100);
+        builder.Property(x => x.OpeningQuantity).HasPrecision(18, 4);
         builder.HasIndex(x => x.MaterialNumber).IsUnique();
+    }
+}
+
+internal sealed class VendorConfiguration : IEntityTypeConfiguration<Vendor>
+{
+    public void Configure(EntityTypeBuilder<Vendor> builder)
+    {
+        builder.ToTable("Vendors");
+        builder.Property(x => x.VendorCode).HasMaxLength(100).IsRequired();
+        builder.Property(x => x.VendorName).HasMaxLength(250).IsRequired();
+        builder.HasIndex(x => x.VendorCode).IsUnique();
+    }
+}
+
+internal sealed class VendorAliasConfiguration : IEntityTypeConfiguration<VendorAlias>
+{
+    public void Configure(EntityTypeBuilder<VendorAlias> builder)
+    {
+        builder.ToTable("VendorAliases");
+        builder.Property(x => x.AliasName).HasMaxLength(250).IsRequired();
+        builder.HasIndex(x => new { x.VendorId, x.AliasName }).IsUnique();
+        builder.HasOne(x => x.Vendor).WithMany(x => x.Aliases).HasForeignKey(x => x.VendorId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -121,11 +146,13 @@ internal sealed class GrnHeaderConfiguration : IEntityTypeConfiguration<GrnHeade
         builder.Property(x => x.GrnDate).HasColumnName("GRNDate");
         builder.Property(x => x.VendorCode).HasMaxLength(100);
         builder.Property(x => x.VendorName).HasMaxLength(250);
+        builder.Property(x => x.InvoiceNumber).HasMaxLength(100);
         builder.Property(x => x.Plant).HasMaxLength(50);
         builder.Property(x => x.StorageLocation).HasMaxLength(50);
         builder.Property(x => x.PurchaseOrder).HasMaxLength(100);
         builder.HasIndex(x => x.GrnNumber);
         builder.HasIndex(x => new { x.GrnNumber, x.Plant, x.StorageLocation });
+        builder.HasOne(x => x.Vendor).WithMany(x => x.GrnHeaders).HasForeignKey(x => x.VendorId).OnDelete(DeleteBehavior.SetNull);
     }
 }
 
@@ -143,6 +170,7 @@ internal sealed class GrnLineConfiguration : IEntityTypeConfiguration<GrnLine>
         builder.Property(x => x.ReceivedQuantity).HasPrecision(18, 4);
         builder.Property(x => x.PackingStandard).HasPrecision(18, 4);
         builder.Property(x => x.BatchNumber).HasMaxLength(100);
+        builder.Property(x => x.BinLocation).HasMaxLength(100);
         builder.Property(x => x.Uom).HasColumnName("UOM").HasMaxLength(20).IsRequired();
         builder.Property(x => x.BusinessKeyHash).HasMaxLength(64).IsRequired();
         builder.Property(x => x.ValidationStatus).HasConversion<string>().HasMaxLength(40);

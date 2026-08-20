@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, Forklift, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -19,18 +19,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getStations, issueMaterial, scanErrorMessage, scanLabel } from "@/services/api";
+import { getLabels, getStations, issueMaterial, scanErrorMessage, scanLabel } from "@/services/api";
+import { createRuntimeId } from "@/lib/id";
 import type { MaterialLabel } from "@/types";
 
 export const Route = createFileRoute("/_shell/issue")({
   head: () => ({
     meta: [
-      { title: "Material Issue — TraceFlow" },
+      { title: "Material Issue — TrackGRN" },
       {
         name: "description",
         content: "Scan QR labels at the issue station to move material from store to production.",
       },
-      { property: "og:title", content: "Material Issue — TraceFlow" },
+      { property: "og:title", content: "Material Issue — TrackGRN" },
       { property: "og:description", content: "Store-to-production issue scanning station." },
     ],
   }),
@@ -48,6 +49,7 @@ interface IssueLog {
 }
 
 function IssuePage() {
+  const queryClient = useQueryClient();
   const [pending, setPending] = useState<MaterialLabel | null>(null);
   const [confirmed, setConfirmed] = useState<MaterialLabel | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,10 +57,15 @@ function IssuePage() {
   const [station, setStation] = useState("STORE-EXIT-01");
   const [remaining, setRemaining] = useState<number | null>(null);
   const { data: stationRows = [] } = useQuery({ queryKey: ["stations"], queryFn: getStations });
+  const { data: labels = [] } = useQuery({ queryKey: ["labels"], queryFn: getLabels });
   const issueStations = stationRows.filter(
     (row) =>
       row.status === "Active" && (row.type === "Issue Station" || row.type === "General Station"),
   );
+  const simulationLabel =
+    labels.find((label) => label.status === "Inwarded") ??
+    labels.find((label) => label.status === "Generated" || label.status === "Printed") ??
+    labels[0];
 
   const scan = useMutation({
     mutationFn: (code: string) => scanLabel(code, "issue"),
@@ -71,7 +78,7 @@ function IssuePage() {
         toast.error("Scan rejected", { description: `${code} · ${message}` });
         setLog((l) => [
           {
-            id: crypto.randomUUID(),
+            id: createRuntimeId("scan"),
             labelUid: code,
             material: "—",
             qty: "—",
@@ -97,12 +104,13 @@ function IssuePage() {
     onSuccess: ({ label, result }) => {
       setConfirmed(label);
       setRemaining(result.remaining);
+      void queryClient.invalidateQueries({ queryKey: ["labels"] });
       toast.success("Material issued", {
         description: `${label.labelUid} · ${result.quantity} ${result.uom} to ${station}`,
       });
       setLog((l) => [
         {
-          id: crypto.randomUUID(),
+          id: createRuntimeId("scan"),
           labelUid: label.labelUid,
           material: label.materialNumber,
           qty: `${result.quantity} ${result.uom}`,
@@ -161,7 +169,7 @@ function IssuePage() {
               onScan={(code) => scan.mutate(code)}
               busy={scan.isPending}
               hint="Scan the pack QR label with the handheld device."
-              suggestion="LBL-00003455"
+              suggestion={simulationLabel?.labelUid}
             />
           </div>
 

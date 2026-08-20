@@ -56,6 +56,9 @@ test.describe("SQL-backed master CRUD", () => {
     await page.getByLabel("Material number").fill(materialNumber);
     await page.getByLabel("Description").fill(`Playwright material ${suffix}`);
     await page.getByLabel("Packing standard").fill("25");
+    await page.getByLabel("Part number").fill(`PART-${suffix}`);
+    await page.getByLabel("Default bin").fill("BIN-PW-01");
+    await page.getByLabel("Opening/reference quantity").fill("1250");
     await page.getByRole("button", { name: "Save Material" }).click();
     await expect(page.getByText("Material created")).toBeVisible();
 
@@ -63,12 +66,49 @@ test.describe("SQL-backed master CRUD", () => {
     await page.getByRole("row").filter({ hasText: materialNumber }).click();
     await page.getByLabel("Description").fill(`Playwright material updated ${suffix}`);
     await page.getByRole("button", { name: "Save Material" }).click();
-    await expect(page.getByText("Material updated")).toBeVisible();
+    await expect(page.getByText("Material updated", { exact: true })).toBeVisible();
 
     await page.getByPlaceholder("Search records…").fill(materialNumber);
     await page.getByRole("row").filter({ hasText: materialNumber }).click();
     await page.getByRole("button", { name: "Deactivate" }).click();
     await expect(page.getByText("Material deactivated")).toBeVisible();
+  });
+
+  test("vendor create, aliases, edit, validation and deactivate", async ({ page }, testInfo) => {
+    test.skip(desktopOnly(testInfo), "Master editing is covered once on desktop");
+    const suffix = Date.now().toString().slice(-8);
+    const vendorCode = `PWV${suffix}`;
+
+    await gotoReady(page, "/vendors");
+    await page.getByPlaceholder(/Search records/).fill("1094021");
+    await expect(page.getByText("1094021", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Kamal CED/)).toBeVisible();
+    await page.getByRole("button", { name: "Add Vendor" }).click();
+    await page.getByRole("button", { name: "Save Vendor" }).click();
+    await expect
+      .poll(() =>
+        page
+          .getByLabel("SAP vendor code")
+          .evaluate((input: HTMLInputElement) => input.checkValidity()),
+      )
+      .toBe(false);
+
+    await page.getByLabel("SAP vendor code").fill(vendorCode);
+    await page.getByLabel("Canonical vendor name").fill(`Playwright Vendor ${suffix}`);
+    await page.getByLabel("Vendor aliases").fill(`PW Vendor ${suffix}, Vendor Alias ${suffix}`);
+    await page.getByRole("button", { name: "Save Vendor" }).click();
+    await expect(page.getByText("Vendor created")).toBeVisible();
+
+    await page.getByPlaceholder(/Search records/).fill(vendorCode);
+    await page.getByRole("row").filter({ hasText: vendorCode }).click();
+    await page.getByLabel("Canonical vendor name").fill(`Playwright Vendor Updated ${suffix}`);
+    await page.getByRole("button", { name: "Save Vendor" }).click();
+    await expect(page.getByText("Vendor updated", { exact: true })).toBeVisible();
+
+    await page.getByPlaceholder(/Search records/).fill(vendorCode);
+    await page.getByRole("row").filter({ hasText: vendorCode }).click();
+    await page.getByRole("button", { name: "Deactivate" }).click();
+    await expect(page.getByText("Vendor deactivated")).toBeVisible();
   });
 
   test("station create, edit, validation and deactivate", async ({ page }, testInfo) => {

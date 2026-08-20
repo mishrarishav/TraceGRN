@@ -1,12 +1,15 @@
 import JSZip from "jszip";
 import { expect, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 
+const API_ORIGIN = process.env["TRACKGRN_API_ORIGIN"] ?? "http://127.0.0.1:5025";
+
 export const routes = [
   ["/", "Operations Dashboard"],
   ["/import", "SAP GRN Import"],
   ["/grns", "Goods Receipt Notes"],
   ["/grns/500515334", "GRN 500515334"],
   ["/materials", "Materials"],
+  ["/vendors", "Vendor Master"],
   ["/labels", "Label Management"],
   ["/inward", "Material Inward"],
   ["/issue", "Material Issue"],
@@ -42,7 +45,7 @@ export async function expectNoBodyOverflow(page: Page) {
 
 export async function gotoReady(page: Page, path: string) {
   if (path !== "/login") {
-    const login = await page.request.post("http://127.0.0.1:5025/api/auth/login", {
+    const login = await page.request.post(`${API_ORIGIN}/api/auth/login`, {
       data: { username: "admin", password: "TrackGRN-Dev-Admin-2026!" },
     });
     expect(login.ok(), await login.text()).toBeTruthy();
@@ -140,13 +143,13 @@ export async function createSapWorkbook(identity = crypto.randomUUID()) {
 }
 
 export async function createImportedLabel(request: APIRequestContext) {
-  const login = await request.post("http://127.0.0.1:5025/api/auth/login", {
+  const login = await request.post(`${API_ORIGIN}/api/auth/login`, {
     data: { username: "admin", password: "TrackGRN-Dev-Admin-2026!" },
   });
   expect(login.ok(), await login.text()).toBeTruthy();
   const session = (await login.json()) as { accessToken: string };
   const headers = { Authorization: `Bearer ${session.accessToken}` };
-  const optionsResponse = await request.get("http://127.0.0.1:5025/api/imports/options", {
+  const optionsResponse = await request.get(`${API_ORIGIN}/api/imports/options`, {
     headers,
   });
   expect(optionsResponse.ok(), await optionsResponse.text()).toBeTruthy();
@@ -154,7 +157,7 @@ export async function createImportedLabel(request: APIRequestContext) {
     mappingTemplates: { id: string; isDefault: boolean }[];
   };
   const workbook = await createSapWorkbook();
-  const previewResponse = await request.post("http://127.0.0.1:5025/api/imports/preview", {
+  const previewResponse = await request.post(`${API_ORIGIN}/api/imports/preview`, {
     headers,
     multipart: {
       file: {
@@ -168,15 +171,13 @@ export async function createImportedLabel(request: APIRequestContext) {
   });
   expect(previewResponse.ok(), await previewResponse.text()).toBeTruthy();
   const preview = (await previewResponse.json()) as { batch: { batchId: string } };
-  const commit = await request.post(
-    `http://127.0.0.1:5025/api/imports/${preview.batch.batchId}/commit`,
-    { headers },
-  );
+  const commit = await request.post(`${API_ORIGIN}/api/imports/${preview.batch.batchId}/commit`, {
+    headers,
+  });
   expect(commit.ok(), await commit.text()).toBeTruthy();
-  const labelsResponse = await request.get(
-    `http://127.0.0.1:5025/api/labels?grn=${workbook.grnNumber}`,
-    { headers },
-  );
+  const labelsResponse = await request.get(`${API_ORIGIN}/api/labels?grn=${workbook.grnNumber}`, {
+    headers,
+  });
   expect(labelsResponse.ok(), await labelsResponse.text()).toBeTruthy();
   const labels = (await labelsResponse.json()) as { labelUid: string; status: string }[];
   expect(labels.length).toBeGreaterThan(0);

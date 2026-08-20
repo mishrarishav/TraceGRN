@@ -6,7 +6,6 @@ using APItrackGRN.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace APItrackGRN.Api.Controllers;
 
@@ -17,7 +16,8 @@ public sealed class ConfigurationController(
     TrackGrnDbContext dbContext,
     IRequestContext requestContext,
     IAuditWriter audit,
-    IOptions<PrinterOptions> printerOptions) : TrackControllerBase
+    ILabelPrinter printer,
+    IPrinterDiscoveryService printerDiscovery) : TrackControllerBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -29,6 +29,7 @@ public sealed class ConfigurationController(
         var settings = await dbContext.ApplicationSettings.AsNoTracking().ToDictionaryAsync(x => x.Key, cancellationToken);
         var templates = await dbContext.ExcelMappingTemplates.AsNoTracking().Where(x => x.IsActive)
             .OrderByDescending(x => x.IsDefault).ThenBy(x => x.Name).ToListAsync(cancellationToken);
+        var printerConfiguration = await printer.GetConfigurationAsync(cancellationToken);
 
         return Ok(new
         {
@@ -46,11 +47,111 @@ public sealed class ConfigurationController(
             importConfiguration = Setting(settings, "ImportConfiguration", new ImportConfig()),
             printing = new
             {
-                printerOptions.Value.Mode, printerOptions.Value.PrinterName, printerOptions.Value.Host,
-                printerOptions.Value.Port, printerOptions.Value.Dpi,
-                hardwareReady = string.Equals(printerOptions.Value.Mode, "Simulation", StringComparison.OrdinalIgnoreCase)
-                    || !string.IsNullOrWhiteSpace(printerOptions.Value.Host)
+                printerConfiguration.Mode, printerConfiguration.PrinterName, printerConfiguration.Host,
+                printerConfiguration.Port, printerConfiguration.Dpi,
+                printerConfiguration.ConnectionTimeoutSeconds,
+                hardwareReady = PrinterIsReady(printerConfiguration)
             }
+        });
+    }
+
+    [HttpPost("printer/test")]
+    public async Task<IActionResult> TestPrinter(CancellationToken cancellationToken)
+    {
+        var configuration = await printer.GetConfigurationAsync(cancellationToken);
+        var labelUid = $"TEST-{DateTime.Now:yyyyMMdd-HHmmss}";
+        PrintDispatchResult result;
+        try
+        {
+            result = await printer.PrintAsync(TestJob(labelUid), cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return PrinterFailure(exception);
+        }
+
+        audit.Add("PrinterTestDispatched", "Printer", result.Printer, newValues: new
+        {
+            labelUid,
+            result.Mode,
+            result.Printer,
+            result.Simulated,
+            configuration.Dpi
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            ok = true,
+            labelUid,
+            result.Mode,
+            result.Printer,
+            result.Simulated,
+            configuration.Dpi
+        });
+    }
+
+    [HttpGet("printer/discover")]
+    public async Task<IActionResult> DiscoverPrinters(CancellationToken cancellationToken) =>
+        Ok(await printerDiscovery.DiscoverAsync(cancellationToken));
+
+    [HttpGet("printer/agents/discover")]
+    public async Task<IActionResult> DiscoverPrintAgents(CancellationToken cancellationToken) =>
+        Ok(await printerDiscovery.DiscoverAgentsAsync(cancellationToken));
+
+    [HttpPost("printer/configure-and-test")]
+    public async Task<IActionResult> ConfigureAndTestPrinter(
+        ConfigurePrinterRequest request,
+        CancellationToken cancellationToken)
+    {
+        var validation = ValidatePrinter(request);
+        if (validation.Count > 0) return ValidationProblem(validation);
+
+        var configuration = new PrinterOptions
+        {
+            Mode = NormalizeMode(request.Mode),
+            PrinterName = request.PrinterName.Trim(),
+            Host = string.IsNullOrWhiteSpace(request.Host) ? null : request.Host.Trim(),
+            Port = request.Port,
+            Dpi = request.Dpi,
+            ConnectionTimeoutSeconds = Math.Clamp(request.ConnectionTimeoutSeconds, 1, 30)
+        };
+        var labelUid = $"TEST-{DateTime.Now:yyyyMMdd-HHmmss}";
+        PrintDispatchResult result;
+        try
+        {
+            result = await printer.PrintAsync(TestJob(labelUid), cancellationToken, configuration);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return PrinterFailure(exception);
+        }
+
+        var previous = await printer.GetConfigurationAsync(cancellationToken);
+        Upsert(
+            "PrinterConfiguration",
+            "Hardware",
+            configuration,
+            "Runtime printer adapter configuration verified by a test label");
+        audit.Add("PrinterConfigured", "Printer", configuration.PrinterName, previous, configuration, new
+        {
+            labelUid,
+            result.Mode,
+            result.Simulated
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            ok = true,
+            saved = true,
+            labelUid,
+            result.Mode,
+            result.Printer,
+            result.Simulated,
+            configuration.Host,
+            configuration.Port,
+            configuration.Dpi
         });
     }
 
@@ -61,6 +162,9 @@ public sealed class ConfigurationController(
             return ValidationProblem(new Dictionary<string, string[]> { ["identificationStrategy"] = ["Identification strategy is required."] });
         if (request.IdentificationStrategy.SelectedFields.Count == 0)
             return ValidationProblem(new Dictionary<string, string[]> { ["selectedFields"] = ["At least one identity field is required."] });
+
+        var plantValidation = ValidatePlantConfiguration(request.PlantConfiguration);
+        if (plantValidation.Count > 0) return ValidationProblem(plantValidation);
 
         var oldStrategy = await dbContext.IdentificationStrategies.SingleAsync(x => x.IsActive, cancellationToken);
         var oldSnapshot = new { oldStrategy.Name, oldStrategy.StrategyType, oldStrategy.SelectedFieldsJson };
@@ -164,6 +268,85 @@ public sealed class ConfigurationController(
         try { return JsonSerializer.Deserialize<T>(json, JsonOptions) ?? fallback; }
         catch (JsonException) { return fallback; }
     }
+
+    private static bool PrinterIsReady(PrinterOptions options) =>
+        string.Equals(options.Mode, "Simulation", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(options.Mode, "WindowsSpooler", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(options.PrinterName)
+        || string.Equals(options.Mode, "RawTcp", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(options.Host)
+        || string.Equals(options.Mode, "LocalAgent", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(options.Host)
+            && !string.IsNullOrWhiteSpace(options.PrinterName);
+
+    private static LabelPrintJob TestJob(string labelUid) => new(
+        labelUid,
+        "M06030952",
+        "TRACKGRN ZEBRA PRINTER TEST",
+        "TEST-NO-DB",
+        "TEST-BATCH",
+        200m,
+        "PC",
+        1,
+        1);
+
+    private static Dictionary<string, string[]> ValidatePrinter(ConfigurePrinterRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        var mode = NormalizeMode(request.Mode);
+        if (mode is not ("Simulation" or "WindowsSpooler" or "RawTcp" or "LocalAgent"))
+            errors["mode"] = ["Mode must be Simulation, WindowsSpooler, RawTcp, or LocalAgent."];
+        if (string.IsNullOrWhiteSpace(request.PrinterName))
+            errors["printerName"] = ["A printer display name or Windows queue name is required."];
+        if (mode == "RawTcp" && string.IsNullOrWhiteSpace(request.Host))
+            errors["host"] = ["Network printer IP address or hostname is required for RawTcp mode."];
+        if (mode == "LocalAgent" && string.IsNullOrWhiteSpace(request.Host))
+            errors["host"] = ["The Windows computer running TrackGRN Print Agent is required."];
+        if (request.Port is < 1 or > 65535)
+            errors["port"] = ["Printer port must be between 1 and 65535."];
+        if (request.Dpi is < 100 or > 1200)
+            errors["dpi"] = ["Printer DPI must be between 100 and 1200."];
+        if (request.ConnectionTimeoutSeconds is < 1 or > 30)
+            errors["connectionTimeoutSeconds"] = ["Connection timeout must be between 1 and 30 seconds."];
+        return errors;
+    }
+
+    private static string NormalizeMode(string? mode) => mode?.Trim().ToLowerInvariant() switch
+    {
+        "simulation" => "Simulation",
+        "windowsspooler" => "WindowsSpooler",
+        "rawtcp" => "RawTcp",
+        "localagent" => "LocalAgent",
+        _ => mode?.Trim() ?? string.Empty
+    };
+
+    private static Dictionary<string, string[]> ValidatePlantConfiguration(PlantConfig configuration)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if ((configuration.ClientName?.Length ?? 0) > 100)
+            errors["plantConfiguration.clientName"] = ["Client name cannot exceed 100 characters."];
+
+        if (!string.IsNullOrWhiteSpace(configuration.ClientLogoDataUrl))
+        {
+            if (configuration.ClientLogoDataUrl.Length > 1_400_000)
+                errors["plantConfiguration.clientLogoDataUrl"] = ["Client logo must be smaller than 1 MB."];
+            else if (!configuration.ClientLogoDataUrl.StartsWith("data:image/png;base64,", StringComparison.OrdinalIgnoreCase)
+                     && !configuration.ClientLogoDataUrl.StartsWith("data:image/jpeg;base64,", StringComparison.OrdinalIgnoreCase)
+                     && !configuration.ClientLogoDataUrl.StartsWith("data:image/webp;base64,", StringComparison.OrdinalIgnoreCase))
+                errors["plantConfiguration.clientLogoDataUrl"] = ["Client logo must be a PNG, JPEG, or WebP image."];
+        }
+
+        return errors;
+    }
+
+    private ObjectResult PrinterFailure(Exception exception) => StatusCode(
+        StatusCodes.Status502BadGateway,
+        new ProblemDetails
+        {
+            Title = "Printer connection failed",
+            Detail = exception.Message,
+            Status = StatusCodes.Status502BadGateway
+        });
 }
 
 public sealed record StrategyRequest(string Name, IdentificationStrategyType StrategyType, List<string> SelectedFields);
@@ -185,8 +368,20 @@ public sealed record BusinessRulesConfig(
     bool AllowGrnRevisionAfterMaterialIssued = false,
     bool RequireAdminReviewForQuantityDecrease = true);
 public sealed record LabelConfig(
-    string UidPrefix = "LBL", string LabelSize = "100x75", string CompanyName = "TraceFlow Industries",
+    string UidPrefix = "LBL", string LabelSize = "100x75", string CompanyName = "TrackGRN Industries",
     int QrSize = 160, bool ShowBatch = true, bool ShowGrnDate = true,
     bool ShowDescription = true, bool ShowBinSequence = true);
-public sealed record PlantConfig(string DefaultPlant = "1000", string DefaultStorageLocation = "RM01", string TimeZone = "Asia/Kolkata");
+public sealed record PlantConfig(
+    string DefaultPlant = "1000",
+    string DefaultStorageLocation = "RM01",
+    string TimeZone = "Asia/Kolkata",
+    string ClientName = "",
+    string ClientLogoDataUrl = "");
 public sealed record ImportConfig(int MaxFileSizeMb = 10, bool BlockDuplicateFileHashes = true, bool AutoGenerateLabels = true);
+public sealed record ConfigurePrinterRequest(
+    string Mode,
+    string PrinterName,
+    string? Host,
+    int Port = 9100,
+    int Dpi = 203,
+    int ConnectionTimeoutSeconds = 5);

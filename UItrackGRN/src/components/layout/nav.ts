@@ -1,5 +1,6 @@
 import {
   Boxes,
+  Building2,
   ClipboardList,
   Cog,
   FileSpreadsheet,
@@ -29,6 +30,7 @@ export const navItems: NavItem[] = [
   { label: "SAP GRN Import", to: "/import", icon: Upload, group: "Operations" },
   { label: "GRNs", to: "/grns", icon: ClipboardList, group: "Operations" },
   { label: "Materials", to: "/materials", icon: Boxes, group: "Operations" },
+  { label: "Vendors", to: "/vendors", icon: Building2, group: "Operations" },
   { label: "Labels", to: "/labels", icon: QrCode, group: "Operations" },
   { label: "Material Inward", to: "/inward", icon: PackageCheck, group: "Shop Floor" },
   { label: "Material Issue", to: "/issue", icon: Forklift, group: "Shop Floor" },

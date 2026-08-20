@@ -1,0 +1,29 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+
+  <PropertyGroup>
+    <OutputName>TrackGRN-PrintAgent-win-x64</OutputName>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <AgentProject>$(MSBuildThisFileDirectory)..\..\src\APItrackGRN.PrintAgent\APItrackGRN.PrintAgent.csproj</AgentProject>
+    <AgentPublishDir>$(MSBuildThisFileDirectory)obj\agent-publish\</AgentPublishDir>
+    <DefineConstants>AgentPublishDir=$(AgentPublishDir)</DefineConstants>
+    <ApiDownloadDir>$(MSBuildThisFileDirectory)..\..\src\APItrackGRN.Api\wwwroot\downloads\</ApiDownloadDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Firewall.wixext" Version="4.0.6" />
+  </ItemGroup>
+
+  <Target Name="PublishPrintAgent" BeforeTargets="CoreCompile">
+    <MSBuild
+      Projects="$(AgentProject)"
+      Targets="Publish"
+      Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(AgentPublishDir)" />
+  </Target>
+
+  <Target Name="CopyInstallerToApi" AfterTargets="Build">
+    <MakeDir Directories="$(ApiDownloadDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(ApiDownloadDir)TrackGRN-PrintAgent.msi" />
+  </Target>
+
+</Project>

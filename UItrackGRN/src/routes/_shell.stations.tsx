@@ -37,7 +37,7 @@ import {
 import type { Station } from "@/types";
 
 export const Route = createFileRoute("/_shell/stations")({
-  head: () => ({ meta: [{ title: "Stations & Devices — TraceFlow" }] }),
+  head: () => ({ meta: [{ title: "Stations & Devices — TrackGRN" }] }),
   component: StationsPage,
 });
 

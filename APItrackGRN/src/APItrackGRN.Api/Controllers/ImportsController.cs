@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using APItrackGRN.Api.Services;
@@ -8,7 +7,6 @@ using APItrackGRN.Application.Labels;
 using APItrackGRN.Domain.Entities;
 using APItrackGRN.Domain.Enums;
 using APItrackGRN.Infrastructure.Persistence;
-using ClosedXML.Excel;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -72,22 +70,23 @@ public sealed class ImportsController(
     public async Task<IActionResult> Preview(IFormFile file, [FromForm] Guid? mappingTemplateId,
         [FromForm] bool overrideDuplicate = false, CancellationToken cancellationToken = default)
     {
-        if (file.Length == 0) return ValidationProblem(Error("file", "Select a non-empty Excel file."));
+        if (file.Length == 0) return ValidationProblem(Error("file", "Select a non-empty import file."));
         if (file.Length > 10 * 1024 * 1024) return StatusCode(413, new ProblemDetails { Title = "File exceeds the 10 MB limit", Status = 413 });
-        if (!string.Equals(Path.GetExtension(file.FileName), ".xlsx", StringComparison.OrdinalIgnoreCase))
-            return ValidationProblem(Error("file", "Only .xlsx files are supported."));
+        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (extension is not ".xlsx" and not ".csv" and not ".tsv" and not ".txt")
+            return ValidationProblem(Error("file", "Only .xlsx, .csv, .tsv and .txt files are supported."));
 
         await using var memory = new MemoryStream();
         await file.CopyToAsync(memory, cancellationToken);
         var bytes = memory.ToArray();
-        if (bytes.Length < 4 || bytes[0] != (byte)'P' || bytes[1] != (byte)'K')
+        if (extension == ".xlsx" && (bytes.Length < 4 || bytes[0] != (byte)'P' || bytes[1] != (byte)'K'))
             return ValidationProblem(Error("file", "The uploaded file is not a valid XLSX workbook."));
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         var duplicate = await dbContext.ImportBatches.AsNoTracking().Where(x => x.FileHash == hash && x.ImportStatus != ImportStatus.Failed)
             .OrderByDescending(x => x.UploadedAt).Select(x => new { x.Id, x.FileName, x.UploadedAt }).FirstOrDefaultAsync(cancellationToken);
         if (duplicate is not null && !overrideDuplicate)
         {
-            var problem = new ProblemDetails { Title = "Duplicate Excel file", Detail = $"This file was already uploaded as {duplicate.FileName} at {duplicate.UploadedAt:O}.", Status = 409 };
+            var problem = new ProblemDetails { Title = "Duplicate import file", Detail = $"This file was already uploaded as {duplicate.FileName} at {duplicate.UploadedAt:O}.", Status = 409 };
             problem.Extensions["code"] = "DUPLICATE_FILE";
             problem.Extensions["existingBatchId"] = duplicate.Id;
             return Conflict(problem);
@@ -102,20 +101,29 @@ public sealed class ImportsController(
         var mapping = JsonSerializer.Deserialize<Dictionary<string, string>>(template.MappingJson, JsonOptions) ?? [];
         var stopwatch = Stopwatch.StartNew();
         List<NormalizedImportRow> parsed;
-        try { parsed = ParseWorkbook(bytes, mapping); }
+        try { parsed = ImportFileParser.Parse(bytes, extension, mapping); }
         catch (InvalidDataException exception) { return ValidationProblem(Error("file", exception.Message)); }
 
         var materials = await dbContext.Materials.AsNoTracking().ToDictionaryAsync(x => x.MaterialNumber, StringComparer.OrdinalIgnoreCase, cancellationToken);
+        var vendors = await dbContext.Vendors.AsNoTracking().Include(x => x.Aliases)
+            .ToDictionaryAsync(x => x.VendorCode, StringComparer.OrdinalIgnoreCase, cancellationToken);
         var candidates = new List<PreviewCandidate>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var source in parsed)
         {
-            var normalized = ApplyDefaults(source, materials);
+            var warnings = new List<string>();
+            var normalized = ApplyDefaults(source, materials, vendors, warnings);
             var errors = ValidateRow(normalized, selectedFields);
+            if (normalized.ExpectedLabelCount is not null && normalized.ReceivedQuantity > 0 && normalized.PackingStandard > 0)
+            {
+                var calculated = labelQuantityCalculator.Calculate(normalized.ReceivedQuantity, normalized.PackingStandard).Count;
+                if (normalized.ExpectedLabelCount != calculated)
+                    warnings.Add($"Source expects {normalized.ExpectedLabelCount} labels, but quantity and pack quantity calculate to {calculated}.");
+            }
             var values = IdentityValues(normalized);
             var key = errors.Count == 0 ? businessKeyCalculator.Calculate(values, selectedFields) : null;
             if (key is not null && !seen.Add(key)) errors.Add("Duplicate business identity within this workbook.");
-            candidates.Add(new PreviewCandidate(normalized, key, errors));
+            candidates.Add(new PreviewCandidate(normalized, key, errors, warnings));
         }
 
         var keys = candidates.Where(x => x.BusinessKeyHash is not null).Select(x => x.BusinessKeyHash!).Distinct().ToList();
@@ -124,7 +132,9 @@ public sealed class ImportsController(
         {
             var found = await dbContext.GrnLines.AsNoTracking().Where(x => x.IsActive && chunk.Contains(x.BusinessKeyHash))
                 .Select(x => new ExistingLine(x.Id, x.BusinessKeyHash, x.ReceivedQuantity, x.PackingStandard,
-                    x.BatchNumber, x.Uom, x.Material.Description,
+                    x.BatchNumber, x.Uom, x.Material.Description, x.BinLocation, x.ManufacturingDate,
+                    x.ExpiryDate, x.ExpectedLabelCount, x.GrnHeader.VendorCode, x.GrnHeader.VendorName,
+                    x.GrnHeader.InvoiceNumber, x.GrnHeader.InvoiceDate,
                     x.Labels.Where(l => l.IsActive && l.LabelStatus == LabelStatus.Issued).Sum(l => (decimal?)l.LabelQuantity) ?? 0,
                     x.Labels.Any(l => l.IsActive && l.LabelStatus != LabelStatus.Generated)))
                 .ToListAsync(cancellationToken);
@@ -177,6 +187,8 @@ public sealed class ImportsController(
         batch.ImportStatus = ImportStatus.Processing;
         var rows = batch.RowResults.OrderBy(x => x.ExcelRowNumber).ToList();
         var materials = await dbContext.Materials.ToDictionaryAsync(x => x.MaterialNumber, StringComparer.OrdinalIgnoreCase, cancellationToken);
+        var vendors = await dbContext.Vendors.Include(x => x.Aliases)
+            .ToDictionaryAsync(x => x.VendorCode, StringComparer.OrdinalIgnoreCase, cancellationToken);
         var headers = await dbContext.GrnHeaders.ToListAsync(cancellationToken);
         var autoLabels = await AutoGenerateLabels(cancellationToken);
         var applied = 0;
@@ -189,7 +201,9 @@ public sealed class ImportsController(
                 material = new Material
                 {
                     MaterialNumber = row.MaterialNumber, Description = row.MaterialDescription,
-                    Uom = row.Uom, DefaultPackingStandard = row.PackingStandard, IsActive = true
+                    Uom = row.Uom, DefaultPackingStandard = row.PackingStandard,
+                    DefaultBinLocation = string.IsNullOrWhiteSpace(row.BinLocation) ? null : row.BinLocation,
+                    IsActive = true
                 };
                 materials.Add(material.MaterialNumber, material);
                 dbContext.Materials.Add(material);
@@ -199,6 +213,23 @@ public sealed class ImportsController(
                 material.Description = row.MaterialDescription;
                 material.Uom = row.Uom;
                 material.DefaultPackingStandard ??= row.PackingStandard;
+                material.DefaultBinLocation ??= string.IsNullOrWhiteSpace(row.BinLocation) ? null : row.BinLocation;
+            }
+
+            Vendor? vendor = null;
+            if (!string.IsNullOrWhiteSpace(row.VendorCode))
+            {
+                if (!vendors.TryGetValue(row.VendorCode, out vendor))
+                {
+                    vendor = new Vendor
+                    {
+                        VendorCode = row.VendorCode,
+                        VendorName = string.IsNullOrWhiteSpace(row.VendorName) ? row.VendorCode : row.VendorName,
+                        IsActive = true
+                    };
+                    vendors.Add(vendor.VendorCode, vendor);
+                    dbContext.Vendors.Add(vendor);
+                }
             }
             var header = headers.FirstOrDefault(x => x.GrnNumber == row.GrnNumber
                 && string.Equals(x.Plant, row.Plant, StringComparison.OrdinalIgnoreCase)
@@ -207,9 +238,10 @@ public sealed class ImportsController(
             {
                 header = new GrnHeader
                 {
-                    GrnNumber = row.GrnNumber, GrnDate = row.GrnDate, VendorCode = row.VendorCode,
-                    VendorName = row.VendorName, Plant = row.Plant, StorageLocation = row.StorageLocation,
-                    PurchaseOrder = row.PurchaseOrder
+                    GrnNumber = row.GrnNumber, GrnDate = row.GrnDate, Vendor = vendor,
+                    VendorCode = row.VendorCode, VendorName = row.VendorName,
+                    InvoiceNumber = row.InvoiceNumber, InvoiceDate = row.InvoiceDate,
+                    Plant = row.Plant, StorageLocation = row.StorageLocation, PurchaseOrder = row.PurchaseOrder
                 };
                 headers.Add(header);
                 dbContext.GrnHeaders.Add(header);
@@ -217,8 +249,11 @@ public sealed class ImportsController(
             else
             {
                 header.GrnDate = row.GrnDate;
+                header.Vendor = vendor;
                 header.VendorCode = row.VendorCode;
                 header.VendorName = row.VendorName;
+                header.InvoiceNumber = row.InvoiceNumber;
+                header.InvoiceDate = row.InvoiceDate;
                 header.PurchaseOrder = row.PurchaseOrder;
             }
 
@@ -230,8 +265,12 @@ public sealed class ImportsController(
                 {
                     GrnHeader = header, Material = material, SapLineItemNumber = row.SapLineItemNumber,
                     ReceivedQuantity = row.ReceivedQuantity, PackingStandard = row.PackingStandard,
-                    BatchNumber = row.BatchNumber, Uom = row.Uom, BusinessKeyHash = result.BusinessKeyHash!,
-                    IdentificationStrategyId = batch.IdentificationStrategyId, ImportBatchId = batch.Id
+                    BatchNumber = row.BatchNumber, BinLocation = row.BinLocation,
+                    ManufacturingDate = row.ManufacturingDate, ExpiryDate = row.ExpiryDate,
+                    ExpectedLabelCount = row.ExpectedLabelCount, Uom = row.Uom, BusinessKeyHash = result.BusinessKeyHash!,
+                    IdentificationStrategyId = batch.IdentificationStrategyId, ImportBatchId = batch.Id,
+                    ValidationStatus = result.ResultType == ImportResultType.Warning
+                        ? RevisionValidationStatus.Warning : RevisionValidationStatus.Valid
                 };
                 dbContext.GrnLines.Add(line);
                 if (autoLabels) GenerateLabels(line, row.ReceivedQuantity, 0, batch.UploadedById);
@@ -265,6 +304,10 @@ public sealed class ImportsController(
                 line.ReceivedQuantity = row.ReceivedQuantity;
                 line.PackingStandard = row.PackingStandard;
                 line.BatchNumber = row.BatchNumber;
+                line.BinLocation = row.BinLocation;
+                line.ManufacturingDate = row.ManufacturingDate;
+                line.ExpiryDate = row.ExpiryDate;
+                line.ExpectedLabelCount = row.ExpectedLabelCount;
                 line.Uom = row.Uom;
                 line.ImportBatchId = batch.Id;
                 line.RecordVersion++;
@@ -295,72 +338,30 @@ public sealed class ImportsController(
         return Ok(new { batchId = batch.Id, status = batch.ImportStatus.ToString(), applied, batch.NewRows, batch.UpdatedRows, batch.UnchangedRows, batch.WarningRows, batch.RejectedRows });
     }
 
-    private List<NormalizedImportRow> ParseWorkbook(byte[] bytes, IReadOnlyDictionary<string, string> mapping)
-    {
-        try
-        {
-            using var workbook = new XLWorkbook(new MemoryStream(bytes));
-            var sheet = workbook.Worksheets.FirstOrDefault() ?? throw new InvalidDataException("Workbook does not contain a worksheet.");
-            var headerRow = sheet.FirstRowUsed() ?? throw new InvalidDataException("Worksheet is empty.");
-            var domainColumns = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var cell in headerRow.CellsUsed())
-            {
-                var source = cell.GetString().Trim();
-                var match = mapping.FirstOrDefault(x => string.Equals(x.Key.Trim(), source, StringComparison.OrdinalIgnoreCase));
-                if (!string.IsNullOrWhiteSpace(match.Value)) domainColumns[match.Value] = cell.Address.ColumnNumber;
-            }
-            var missing = new[] { "GRNNumber", "GRNDate", "MaterialNumber", "MaterialDescription", "ReceivedQuantity" }
-                .Where(x => !domainColumns.ContainsKey(x)).ToList();
-            if (missing.Count > 0) throw new InvalidDataException($"Required mapped columns are missing: {string.Join(", ", missing)}.");
-            var output = new List<NormalizedImportRow>();
-            var last = sheet.LastRowUsed()?.RowNumber() ?? headerRow.RowNumber();
-            for (var number = headerRow.RowNumber() + 1; number <= last; number++)
-            {
-                var row = sheet.Row(number);
-                string Text(string field) => domainColumns.TryGetValue(field, out var column) ? row.Cell(column).GetFormattedString().Trim() : string.Empty;
-                if (string.IsNullOrWhiteSpace(Text("GRNNumber")) && string.IsNullOrWhiteSpace(Text("MaterialNumber"))) continue;
-                output.Add(new NormalizedImportRow(number, Text("GRNNumber"), ParseDate(row, domainColumns, "GRNDate"),
-                    Text("SAPLineItemNumber"), Text("MaterialNumber").ToUpperInvariant(), Text("MaterialDescription"),
-                    ParseDecimal(row, domainColumns, "ReceivedQuantity"), ParseDecimal(row, domainColumns, "PackingStandard"),
-                    Text("BatchNumber"), Text("UOM"), Text("Plant"), Text("StorageLocation"),
-                    Text("PurchaseOrder"), Text("VendorCode"), Text("VendorName")));
-            }
-            if (output.Count == 0) throw new InvalidDataException("Workbook does not contain any material rows.");
-            return output;
-        }
-        catch (InvalidDataException) { throw; }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            throw new InvalidDataException($"Unable to read the XLSX workbook: {exception.Message}");
-        }
-    }
-
-    private static DateOnly ParseDate(IXLRow row, IReadOnlyDictionary<string, int> columns, string field)
-    {
-        if (!columns.TryGetValue(field, out var column)) return default;
-        var cell = row.Cell(column);
-        if (cell.TryGetValue<DateTime>(out var date)) return DateOnly.FromDateTime(date);
-        return DateOnly.TryParse(cell.GetFormattedString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) ? parsed : default;
-    }
-
-    private static decimal ParseDecimal(IXLRow row, IReadOnlyDictionary<string, int> columns, string field)
-    {
-        if (!columns.TryGetValue(field, out var column)) return 0;
-        var cell = row.Cell(column);
-        if (cell.TryGetValue<decimal>(out var value)) return value;
-        return decimal.TryParse(cell.GetFormattedString(), NumberStyles.Any, CultureInfo.InvariantCulture, out value) ? value : 0;
-    }
-
-    private static NormalizedImportRow ApplyDefaults(NormalizedImportRow row, IReadOnlyDictionary<string, Material> materials)
+    private static NormalizedImportRow ApplyDefaults(
+        NormalizedImportRow row,
+        IReadOnlyDictionary<string, Material> materials,
+        IReadOnlyDictionary<string, Vendor> vendors,
+        ICollection<string> warnings)
     {
         materials.TryGetValue(row.MaterialNumber, out var material);
+        vendors.TryGetValue(row.VendorCode, out var vendor);
+        if (vendor is not null && !string.IsNullOrWhiteSpace(row.VendorName))
+        {
+            var sourceNameMatches = string.Equals(vendor.VendorName, row.VendorName, StringComparison.OrdinalIgnoreCase)
+                || vendor.Aliases.Any(alias => string.Equals(alias.AliasName, row.VendorName, StringComparison.OrdinalIgnoreCase));
+            if (!sourceNameMatches)
+                warnings.Add($"Supplier name '{row.VendorName}' does not match vendor master {vendor.VendorCode} ({vendor.VendorName}); master name will be used.");
+        }
         return row with
         {
             MaterialDescription = string.IsNullOrWhiteSpace(row.MaterialDescription) ? material?.Description ?? string.Empty : row.MaterialDescription,
             PackingStandard = row.PackingStandard > 0 ? row.PackingStandard : material?.DefaultPackingStandard ?? 0,
             Uom = string.IsNullOrWhiteSpace(row.Uom) ? material?.Uom ?? "PCS" : row.Uom.ToUpperInvariant(),
             Plant = string.IsNullOrWhiteSpace(row.Plant) ? "1000" : row.Plant,
-            StorageLocation = string.IsNullOrWhiteSpace(row.StorageLocation) ? "RM01" : row.StorageLocation
+            StorageLocation = string.IsNullOrWhiteSpace(row.StorageLocation) ? "RM01" : row.StorageLocation,
+            BinLocation = string.IsNullOrWhiteSpace(row.BinLocation) ? material?.DefaultBinLocation ?? string.Empty : row.BinLocation,
+            VendorName = vendor?.VendorName ?? row.VendorName
         };
     }
 
@@ -373,6 +374,8 @@ public sealed class ImportsController(
         if (string.IsNullOrWhiteSpace(row.MaterialDescription)) errors.Add("Material description is required.");
         if (row.ReceivedQuantity <= 0) errors.Add("Received quantity must be greater than zero.");
         if (row.PackingStandard <= 0) errors.Add("Packing standard is missing or invalid.");
+        if (row.ManufacturingDate is not null && row.ExpiryDate is not null && row.ExpiryDate < row.ManufacturingDate)
+            errors.Add("Expiry date cannot be earlier than manufacturing date.");
         var values = IdentityValues(row);
         foreach (var field in identityFields.Where(field => !values.TryGetValue(field, out var value) || string.IsNullOrWhiteSpace(value)))
             errors.Add($"Identity field {field} is required by the active strategy.");
@@ -389,7 +392,8 @@ public sealed class ImportsController(
     private static (ImportResultType Type, string Message) Classify(PreviewCandidate candidate, IReadOnlyDictionary<string, ExistingLine> existing)
     {
         if (candidate.Errors.Count > 0) return (ImportResultType.Rejected, string.Join(" ", candidate.Errors));
-        if (!existing.TryGetValue(candidate.BusinessKeyHash!, out var line)) return (ImportResultType.New, "New business identity; row will be inserted.");
+        if (!existing.TryGetValue(candidate.BusinessKeyHash!, out var line))
+            return WithWarnings(candidate, ImportResultType.New, "New business identity; row will be inserted.");
         var row = candidate.Row;
         if (row.ReceivedQuantity < line.IssuedQuantity)
             return (ImportResultType.Rejected, $"Received quantity {row.ReceivedQuantity} cannot be below issued quantity {line.IssuedQuantity}.");
@@ -398,11 +402,28 @@ public sealed class ImportsController(
         var changed = row.ReceivedQuantity != line.ReceivedQuantity || row.PackingStandard != line.PackingStandard
             || !string.Equals(row.BatchNumber, line.BatchNumber, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(row.Uom, line.Uom, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(row.MaterialDescription, line.Description, StringComparison.Ordinal);
-        if (!changed) return (ImportResultType.Unchanged, "No business field changed.");
+            || !string.Equals(row.MaterialDescription, line.Description, StringComparison.Ordinal)
+            || !string.Equals(row.BinLocation, line.BinLocation, StringComparison.OrdinalIgnoreCase)
+            || row.ManufacturingDate != line.ManufacturingDate || row.ExpiryDate != line.ExpiryDate
+            || row.ExpectedLabelCount != line.ExpectedLabelCount
+            || !string.Equals(row.VendorCode, line.VendorCode, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(row.VendorName, line.VendorName, StringComparison.Ordinal)
+            || !string.Equals(row.InvoiceNumber, line.InvoiceNumber, StringComparison.OrdinalIgnoreCase)
+            || row.InvoiceDate != line.InvoiceDate;
+        if (!changed) return WithWarnings(candidate, ImportResultType.Unchanged, "No business field changed.");
         if (row.ReceivedQuantity < line.ReceivedQuantity)
-            return (ImportResultType.Warning, "Quantity decrease will be reconciled against unprocessed labels during commit.");
-        return (ImportResultType.Updated, "Existing line will be revised and label delta reconciled.");
+            return WithWarnings(candidate, ImportResultType.Warning, "Quantity decrease will be reconciled against unprocessed labels during commit.");
+        return WithWarnings(candidate, ImportResultType.Updated, "Existing line will be revised and label delta reconciled.");
+    }
+
+    private static (ImportResultType Type, string Message) WithWarnings(
+        PreviewCandidate candidate,
+        ImportResultType type,
+        string message)
+    {
+        if (candidate.Warnings.Count == 0) return (type, message);
+        var resultType = type is ImportResultType.New or ImportResultType.Updated ? ImportResultType.Warning : type;
+        return (resultType, $"{message} {string.Join(" ", candidate.Warnings)}");
     }
 
     private bool ReconcileLabels(GrnLine line, decimal newQuantity, Guid userId, out string? error)
@@ -484,6 +505,10 @@ public sealed class ImportsController(
         if (line.ReceivedQuantity != row.ReceivedQuantity) fields.Add("Received Quantity");
         if (line.PackingStandard != row.PackingStandard) fields.Add("Packing Standard");
         if (!string.Equals(line.BatchNumber, row.BatchNumber, StringComparison.Ordinal)) fields.Add("Batch Number");
+        if (!string.Equals(line.BinLocation, row.BinLocation, StringComparison.Ordinal)) fields.Add("Bin Location");
+        if (line.ManufacturingDate != row.ManufacturingDate) fields.Add("Manufacturing Date");
+        if (line.ExpiryDate != row.ExpiryDate) fields.Add("Expiry Date");
+        if (line.ExpectedLabelCount != row.ExpectedLabelCount) fields.Add("Expected Label Count");
         if (!string.Equals(line.Uom, row.Uom, StringComparison.Ordinal)) fields.Add("UOM");
         if (!string.Equals(line.Material.Description, row.MaterialDescription, StringComparison.Ordinal)) fields.Add("Material Description");
         return fields;
@@ -491,7 +516,8 @@ public sealed class ImportsController(
 
     private static object Snapshot(GrnLine line) => new
     {
-        line.ReceivedQuantity, line.PackingStandard, line.BatchNumber, line.Uom,
+        line.ReceivedQuantity, line.PackingStandard, line.BatchNumber, line.BinLocation,
+        line.ManufacturingDate, line.ExpiryDate, line.ExpectedLabelCount, line.Uom,
         MaterialDescription = line.Material.Description, line.SapLineItemNumber
     };
 
@@ -529,20 +555,24 @@ public sealed class ImportsController(
             lineItem = int.TryParse(row.SapLineItemNumber, out var line) ? line : row.ExcelRowNumber,
             row.MaterialNumber, description = row.MaterialDescription, quantity = row.ReceivedQuantity,
             packingStandard = row.PackingStandard, batch = row.BatchNumber, row.Plant,
+            uom = row.Uom, vendorCode = row.VendorCode, vendorName = row.VendorName,
+            invoiceNumber = row.InvoiceNumber, invoiceDate = row.InvoiceDate, binLocation = row.BinLocation,
+            manufacturingDate = row.ManufacturingDate, expiryDate = row.ExpiryDate,
+            expectedLabelCount = row.ExpectedLabelCount,
             status = result.ResultType.ToString(), reason = result.Message
         };
     }
 
     private static Dictionary<string, string[]> Error(string key, string message) => new() { [key] = [message] };
 
-    private sealed record PreviewCandidate(NormalizedImportRow Row, string? BusinessKeyHash, List<string> Errors);
+    private sealed record PreviewCandidate(
+        NormalizedImportRow Row,
+        string? BusinessKeyHash,
+        List<string> Errors,
+        List<string> Warnings);
     private sealed record ExistingLine(Guid Id, string BusinessKeyHash, decimal ReceivedQuantity,
         decimal PackingStandard, string? BatchNumber, string Uom, string Description,
+        string? BinLocation, DateOnly? ManufacturingDate, DateOnly? ExpiryDate, int? ExpectedLabelCount,
+        string? VendorCode, string? VendorName, string? InvoiceNumber, DateOnly? InvoiceDate,
         decimal IssuedQuantity, bool HasProcessedLabels);
 }
-
-public sealed record NormalizedImportRow(
-    int ExcelRowNumber, string GrnNumber, DateOnly GrnDate, string SapLineItemNumber,
-    string MaterialNumber, string MaterialDescription, decimal ReceivedQuantity,
-    decimal PackingStandard, string BatchNumber, string Uom, string Plant,
-    string StorageLocation, string PurchaseOrder, string VendorCode, string VendorName);

@@ -51,7 +51,8 @@ public sealed class GrnsController(TrackGrnDbContext dbContext) : ControllerBase
         var header = await dbContext.GrnHeaders.AsNoTracking().Where(x => x.Id == id)
             .Select(x => new
             {
-                x.GrnNumber, x.GrnDate, x.VendorName, x.VendorCode, x.PurchaseOrder, x.Plant,
+                x.GrnNumber, x.GrnDate, x.VendorName, x.VendorCode, x.InvoiceNumber, x.InvoiceDate,
+                x.PurchaseOrder, x.Plant,
                 x.StorageLocation, x.UpdatedAt, x.CreatedAt,
                 importBatch = x.Lines.Where(l => l.IsActive).OrderByDescending(l => l.ImportBatch.UploadedAt)
                     .Select(l => l.ImportBatch.FileName).FirstOrDefault() ?? "—"
@@ -61,7 +62,8 @@ public sealed class GrnsController(TrackGrnDbContext dbContext) : ControllerBase
             .Select(x => new
             {
                 x.Id, x.SapLineItemNumber, x.Material.MaterialNumber, x.Material.Description, x.ReceivedQuantity,
-                x.PackingStandard, x.BatchNumber, x.ValidationStatus,
+                x.PackingStandard, x.BatchNumber, x.BinLocation, x.ManufacturingDate, x.ExpiryDate,
+                x.ExpectedLabelCount, x.Uom, x.ValidationStatus,
                 labels = x.Labels.Count(l => l.IsActive),
                 issuedQty = x.Labels.Where(l => l.IsActive && l.LabelStatus == LabelStatus.Issued).Sum(l => (decimal?)l.LabelQuantity) ?? 0,
                 inwarded = x.Labels.Count(l => l.IsActive && (l.LabelStatus == LabelStatus.Inwarded || l.LabelStatus == LabelStatus.Stored)),
@@ -72,6 +74,7 @@ public sealed class GrnsController(TrackGrnDbContext dbContext) : ControllerBase
             grnLineId = x.Id, lineItem = int.TryParse(x.SapLineItemNumber, out var parsed) ? parsed : index + 1,
             x.MaterialNumber, x.Description, receivedQty = x.ReceivedQuantity, x.PackingStandard,
             x.labels, x.issuedQty, availableQty = x.ReceivedQuantity - x.issuedQty - x.blockedQty,
+            x.Uom, x.BinLocation, x.ManufacturingDate, x.ExpiryDate, x.ExpectedLabelCount,
             batch = x.BatchNumber ?? "—", status = x.ValidationStatus switch
             {
                 RevisionValidationStatus.Warning => "Warning",
@@ -91,7 +94,8 @@ public sealed class GrnsController(TrackGrnDbContext dbContext) : ControllerBase
         return new
         {
             header.GrnNumber, grnDate = header.GrnDate.ToString("yyyy-MM-dd"), vendor = header.VendorName ?? "—",
-            vendorCode = header.VendorCode ?? "—", poNumber = header.PurchaseOrder ?? "—", plant = header.Plant ?? "—",
+            vendorCode = header.VendorCode ?? "—", invoiceNumber = header.InvoiceNumber ?? "—",
+            invoiceDate = header.InvoiceDate?.ToString("yyyy-MM-dd"), poNumber = header.PurchaseOrder ?? "—", plant = header.Plant ?? "—",
             storageLocation = header.StorageLocation ?? "—", header.importBatch, materials = lines.Count,
             receivedQty = received, issuedQty = issued, availableQty = received - issued - blocked,
             labelled, inwarded, status, lastUpdated = (header.UpdatedAt ?? header.CreatedAt).ToString("O"), lines = lineDtos

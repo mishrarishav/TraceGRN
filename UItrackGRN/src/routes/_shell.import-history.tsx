@@ -13,12 +13,12 @@ import type { ImportBatch } from "@/types";
 export const Route = createFileRoute("/_shell/import-history")({
   head: () => ({
     meta: [
-      { title: "Import History — TraceFlow" },
+      { title: "Import History — TrackGRN" },
       {
         name: "description",
         content: "Audit of every SAP GRN Excel import batch with row-level outcomes.",
       },
-      { property: "og:title", content: "Import History — TraceFlow" },
+      { property: "og:title", content: "Import History — TrackGRN" },
       { property: "og:description", content: "SAP GRN import batch history and outcomes." },
     ],
   }),

@@ -16,24 +16,23 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { getLabels, printLabel, printLabelBatch } from "@/services/api";
+  getConfiguration,
+  getLabels,
+  printLabel,
+  printLabelBatch,
+  testPrinter,
+} from "@/services/api";
 import type { MaterialLabel } from "@/types";
 
 export const Route = createFileRoute("/_shell/labels")({
   head: () => ({
     meta: [
-      { title: "Label Management — TraceFlow" },
+      { title: "Label Management — TrackGRN" },
       {
         name: "description",
         content: "Generate, preview and reprint QR material labels with full print audit history.",
       },
-      { property: "og:title", content: "Label Management — TraceFlow" },
+      { property: "og:title", content: "Label Management — TrackGRN" },
       { property: "og:description", content: "QR label generation and reprint control." },
     ],
   }),
@@ -43,10 +42,13 @@ export const Route = createFileRoute("/_shell/labels")({
 function LabelsPage() {
   const queryClient = useQueryClient();
   const { data = [], isLoading } = useQuery({ queryKey: ["labels"], queryFn: getLabels });
+  const { data: configuration } = useQuery({
+    queryKey: ["configuration"],
+    queryFn: getConfiguration,
+  });
   const [status, setStatus] = useState("All");
   const [selected, setSelected] = useState<MaterialLabel | null>(null);
   const [reprint, setReprint] = useState<MaterialLabel | null>(null);
-  const [printer, setPrinter] = useState("Zebra ZT411 — Store Bay A");
   const [cfg, setCfg] = useState({
     showBatch: true,
     showGrnDate: true,
@@ -64,15 +66,28 @@ function LabelsPage() {
     onError: (error) => toast.error("Batch print failed", { description: error.message }),
   });
   const reprintMutation = useMutation({
-    mutationFn: (uid: string) => printLabel(uid, "Operator-confirmed damaged label reprint"),
+    mutationFn: (label: MaterialLabel) =>
+      printLabel(
+        label.labelUid,
+        label.printCount > 0 ? "Operator-confirmed damaged label reprint" : undefined,
+      ),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ["labels"] });
-      toast.success(result.simulated ? "Reprint simulated" : "Reprint sent", {
+      const action = (reprint?.printCount ?? 0) > 0 ? "Reprint" : "Print";
+      toast.success(result.simulated ? `${action} simulated` : `${action} sent`, {
         description: `${reprint?.labelUid ?? "Label"} → ${result.printer}`,
       });
       setReprint(null);
     },
     onError: (error) => toast.error("Reprint failed", { description: error.message }),
+  });
+  const printerTest = useMutation({
+    mutationFn: testPrinter,
+    onSuccess: (result) =>
+      toast.success(result.simulated ? "Test label simulated" : "Test label sent to printer", {
+        description: `${result.labelUid} → ${result.printer} (${result.mode}, ${result.dpi} dpi)`,
+      }),
+    onError: (error) => toast.error("Test label print failed", { description: error.message }),
   });
 
   const filtered = data.filter((l) => status === "All" || l.status === status);
@@ -133,7 +148,12 @@ function LabelsPage() {
             setReprint(l);
           }}
         >
-          <RefreshCw className="h-3.5 w-3.5" /> Reprint
+          {l.printCount > 0 ? (
+            <RefreshCw className="h-3.5 w-3.5" />
+          ) : (
+            <Printer className="h-3.5 w-3.5" />
+          )}
+          {l.printCount > 0 ? "Reprint" : "Print"}
         </Button>
       ),
     },
@@ -150,6 +170,15 @@ function LabelsPage() {
         actions={
           <>
             <ExportButton name="labels" />
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => printerTest.mutate()}
+              disabled={printerTest.isPending || !configuration?.printing.hardwareReady}
+            >
+              <Printer className="h-4 w-4" />
+              {printerTest.isPending ? "Sending…" : "Print Test Label"}
+            </Button>
             <Button
               className="gap-2"
               onClick={() => batchPrint.mutate(filtered.map((label) => label.labelUid))}
@@ -201,24 +230,29 @@ function LabelsPage() {
             <p className="text-sm font-semibold">Label Preview</p>
             <p className="mb-3 text-xs text-muted-foreground">100 × 75 mm thermal transfer</p>
             {active ? <QRPreview label={active} config={cfg} /> : null}
+            <Button
+              type="button"
+              className="mt-4 w-full gap-2"
+              onClick={() => active && setReprint(active)}
+              disabled={!active}
+            >
+              <Printer className="h-4 w-4" />
+              {(active?.printCount ?? 0) > 0 ? "Reprint Selected Label" : "Print Selected Label"}
+            </Button>
           </div>
 
           <div className="panel space-y-3 p-4">
             <p className="text-sm font-semibold">Print Settings</p>
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">Printer</Label>
-              <Select value={printer} onValueChange={setPrinter}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Zebra ZT411 — Store Bay A">
-                    Zebra ZT411 — Store Bay A
-                  </SelectItem>
-                  <SelectItem value="Zebra ZT230 — Receiving">Zebra ZT230 — Receiving</SelectItem>
-                  <SelectItem value="TSC MH240 — Line 2">TSC MH240 — Line 2</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="rounded-lg border border-border bg-surface p-3">
+              <Label className="text-xs text-muted-foreground">Active printer</Label>
+              <p className="mt-1 text-sm font-medium">
+                {configuration?.printing.printerName ?? "Loading printer…"}
+              </p>
+              <p className="num text-xs text-muted-foreground">
+                {configuration
+                  ? `${configuration.printing.mode} · ${configuration.printing.dpi} dpi`
+                  : "Reading API configuration"}
+              </p>
             </div>
             {(
               [
@@ -243,10 +277,14 @@ function LabelsPage() {
       <ConfirmationDialog
         open={!!reprint}
         onOpenChange={(o) => !o && setReprint(null)}
-        title="Reprint this label?"
-        description={`Label ${reprint?.labelUid ?? ""} has been printed ${reprint?.printCount ?? 0} time(s). A reprint is recorded in the audit log.`}
-        confirmLabel="Reprint Label"
-        onConfirm={() => reprint && reprintMutation.mutate(reprint.labelUid)}
+        title={(reprint?.printCount ?? 0) > 0 ? "Reprint this label?" : "Print this label?"}
+        description={
+          (reprint?.printCount ?? 0) > 0
+            ? `Label ${reprint?.labelUid ?? ""} has been printed ${reprint?.printCount ?? 0} time(s). A reprint is recorded in the audit log.`
+            : `Send label ${reprint?.labelUid ?? ""} to the active configured printer? The print is recorded in the audit log.`
+        }
+        confirmLabel={(reprint?.printCount ?? 0) > 0 ? "Reprint Label" : "Print Label"}
+        onConfirm={() => reprint && reprintMutation.mutate(reprint)}
       />
     </div>
   );

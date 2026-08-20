@@ -1,4 +1,4 @@
-# TraceFlow UI
+# TrackGRN UI
 
 App Name "TraceGRN"
 
@@ -192,7 +192,7 @@ Application Branding
 
 Use temporary brand:
 
-TraceFlow
+TrackGRN
 
 Subtitle:
 
@@ -292,7 +292,7 @@ Password: admin123
 
 Include:
 
-TraceFlow logo
+TrackGRN logo
 
 Material Traceability System
 
@@ -840,7 +840,7 @@ Create realistic thermal label preview.
 
 Label should display:
 
-TraceFlow
+TrackGRN
 
 QR Code placeholder
 
@@ -1612,7 +1612,7 @@ mobile app feel
 
 Add optional UI banner:
 
-Install TraceFlow App
+Install TrackGRN App
 
 No backend required.
 

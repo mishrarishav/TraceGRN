@@ -12,7 +12,7 @@ TrackGRN/
 
 - Node.js and npm
 - .NET 8 SDK
-- Microsoft SQL Server (the development configuration expects `localhost\\SQLEXPRESS`)
+- Access to the Microsoft SQL Server configured in `APItrackGRN/src/APItrackGRN.Api/appsettings.json`
 
 ## Commands
 
@@ -51,16 +51,10 @@ npm run build
 
 ## Configuration
 
-Development secrets are local-only and are not committed. After a fresh clone, create
-the local configuration from the safe example:
-
-```powershell
-Copy-Item APItrackGRN/src/APItrackGRN.Api/appsettings.Development.example.json `
-  APItrackGRN/src/APItrackGRN.Api/appsettings.Development.json
-```
-
-Replace the two `REPLACE_WITH_...` values before running the seed command. You can
-also override settings without editing the local file by using environment variables:
+Shared defaults, including the SQL Server target, are stored in
+`APItrackGRN/src/APItrackGRN.Api/appsettings.json`. Development-only overrides are stored in
+`appsettings.Development.json`. Any setting can also be overridden without editing a file by
+using environment variables:
 
 ```powershell
 $env:ConnectionStrings__TrackGRN='Server=localhost\SQLEXPRESS;Database=TrackGRN;Trusted_Connection=True;TrustServerCertificate=True'
@@ -74,6 +68,7 @@ See [APItrackGRN/README.md](APItrackGRN/README.md) for backend and database deta
 
 ## Functional testing and operator documentation
 
+- [Client demonstration report (single offline HTML)](docs/TrackGRN-Client-Report.html)
 - [Playwright functional test report](docs/PLAYWRIGHT-TEST-REPORT.md)
 - [Operator user guide](docs/OPERATOR-USER-GUIDE.md)
 - [Annotated screenshots](docs/playwright-evidence/)

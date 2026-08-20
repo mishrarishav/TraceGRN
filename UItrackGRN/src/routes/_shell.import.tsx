@@ -27,12 +27,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/_shell/import")({
   head: () => ({
     meta: [
-      { title: "SAP GRN Import — TraceFlow" },
+      { title: "SAP GRN Import — TrackGRN" },
       {
         name: "description",
-        content: "Upload SAP GRN Excel extracts, validate rows and commit material records.",
+        content:
+          "Upload SAP GRN Excel, CSV or TSV extracts, validate rows and commit material records.",
       },
-      { property: "og:title", content: "SAP GRN Import — TraceFlow" },
+      { property: "og:title", content: "SAP GRN Import — TrackGRN" },
       { property: "og:description", content: "Validate and commit SAP GRN Excel extracts." },
     ],
   }),
@@ -85,8 +86,8 @@ function ImportPage() {
 
   const handleFile = (file?: File) => {
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".xlsx")) {
-      toast.error("Only .xlsx files are supported");
+    if (!/[.](xlsx|csv|tsv|txt)$/i.test(file.name)) {
+      toast.error("Only .xlsx, .csv, .tsv and .txt files are supported");
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
@@ -138,7 +139,7 @@ function ImportPage() {
               <span className="font-semibold text-info">{r.quantity}</span>
             </>
           ) : (
-            r.quantity
+            `${r.quantity.toLocaleString()} ${r.uom ?? ""}`
           )}
         </span>
       ),
@@ -149,6 +150,30 @@ function ImportPage() {
       render: (r) => <span className="num">{r.packingStandard}</span>,
     },
     { key: "batch", header: "Batch", render: (r) => <span className="num">{r.batch}</span> },
+    {
+      key: "source",
+      header: "Vendor / Invoice / Bin",
+      render: (r) => (
+        <div className="space-y-0.5 text-xs">
+          <p>{r.vendorCode ? `${r.vendorCode} · ${r.vendorName ?? ""}` : "—"}</p>
+          <p className="text-muted-foreground">
+            {[r.invoiceNumber, r.binLocation ? `Bin ${r.binLocation}` : ""]
+              .filter(Boolean)
+              .join(" · ") || "—"}
+          </p>
+        </div>
+      ),
+      className: "min-w-[190px]",
+    },
+    {
+      key: "labels",
+      header: "Labels",
+      render: (r) => (
+        <span className="num">
+          {r.expectedLabelCount ?? Math.ceil(r.quantity / Math.max(1, r.packingStandard))}
+        </span>
+      ),
+    },
     { key: "status", header: "Status", render: (r) => <StatusBadge status={r.status} /> },
     {
       key: "reason",
@@ -161,7 +186,7 @@ function ImportPage() {
     <div className="space-y-6">
       <PageHeader
         title="SAP GRN Import"
-        description="Upload the SAP Excel extract, validate every row, then commit to the traceability database."
+        description="Upload Excel, CSV or tab-separated GRN data; columns are auto-mapped before SQL commit."
         icon={<Upload className="h-5 w-5" />}
         actions={<ExportButton name="import-preview" />}
       />
@@ -218,8 +243,10 @@ function ImportPage() {
               <span className="brand-gradient flex h-14 w-14 items-center justify-center rounded-2xl text-primary-foreground">
                 <FileSpreadsheet className="h-7 w-7" />
               </span>
-              <h3 className="mt-4 font-semibold">Drop your SAP GRN Excel file here</h3>
-              <p className="mt-1 text-sm text-muted-foreground">Supports .xlsx up to 10 MB</p>
+              <h3 className="mt-4 font-semibold">Drop your SAP GRN file here</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Supports .xlsx, .csv, .tsv and .txt up to 10 MB
+              </p>
               <Button
                 className="mt-5"
                 onClick={() => inputRef.current?.click()}
@@ -231,7 +258,7 @@ function ImportPage() {
               <input
                 ref={inputRef}
                 type="file"
-                accept=".xlsx"
+                accept=".xlsx,.csv,.tsv,.txt"
                 className="hidden"
                 onChange={(e) => handleFile(e.target.files?.[0])}
               />

@@ -1,32 +1,47 @@
 import { expect, test } from "@playwright/test";
-import { createSapWorkbook, desktopOnly, gotoReady } from "./helpers";
+import { createImportedLabel, desktopOnly, gotoReady } from "./helpers";
 
 test.describe("business workflows", () => {
-  test("SAP import rejects non-xlsx files and commits a valid preview", async ({
+  test("business CSV auto-maps, previews and persists through the UI", async ({
     page,
   }, testInfo) => {
     test.skip(desktopOnly(testInfo), "Functional flow runs once in the desktop project.");
     await gotoReady(page, "/import");
     const input = page.locator('input[type="file"]');
     await input.setInputFiles({
-      name: "invalid.csv",
-      mimeType: "text/csv",
+      name: "invalid.pdf",
+      mimeType: "application/pdf",
       buffer: Buffer.from("bad"),
     });
-    await expect(page.getByText("Only .xlsx files are supported")).toBeVisible();
+    await expect(
+      page.getByText("Only .xlsx, .csv, .tsv and .txt files are supported"),
+    ).toBeVisible();
 
-    const workbook = await createSapWorkbook();
+    const grnNumber = `8${Date.now().toString().slice(-9)}`;
+    const csv = [
+      "Gr No,Gr date,Material,Material Description,Quantity,UOM,Vendor,Invo No,Inv Date,Sup Name,Bin loc,Mfg date,Exp Date,Pack Qty,No of Labels to print",
+      `${grnNumber},03.08.2025,M06030952,COMPRESSION BUMPER,"1,000",PC,1094852,PW-INV-${grnNumber},02.08.2025,Kumar Automates,210,01.08.2025,01.08.2027,200,5`,
+    ].join("\n");
     await input.setInputFiles({
-      name: `${workbook.grnNumber}.xlsx`,
-      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      buffer: workbook.buffer,
+      name: `${grnNumber}.csv`,
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv, "utf8"),
     });
     await expect(page.getByText("File parsed")).toBeVisible();
+    await expect(page.getByText("1094852 · Kumar Automates")).toBeVisible();
+    await expect(page.getByText(`PW-INV-${grnNumber} · Bin 210`)).toBeVisible();
     await expect(page.getByRole("button", { name: "Commit Import" })).toBeVisible();
     await page.getByRole("button", { name: "Commit Import" }).click();
     await page.getByRole("button", { name: "Commit Import", exact: true }).last().click();
     await expect(page.getByText("Import committed")).toBeVisible();
     await expect(page.getByText("Completed", { exact: true })).toBeVisible();
+
+    await gotoReady(page, "/grns");
+    await page.getByPlaceholder(/Search records/).fill(grnNumber);
+    await page.getByText(grnNumber, { exact: true }).click();
+    await expect(page.getByText(`PW-INV-${grnNumber} · 2025-08-02`)).toBeVisible();
+    await page.getByRole("tab", { name: "Line Items" }).click();
+    await expect(page.getByText("210", { exact: true })).toBeVisible();
   });
 
   test("GRN search opens a multi-material GRN detail", async ({ page }, testInfo) => {
@@ -63,6 +78,18 @@ test.describe("business workflows", () => {
     await expect(page.getByRole("alertdialog")).toBeVisible();
     await page.getByRole("button", { name: "Reprint Label" }).click();
     await expect(page.getByText(/Reprint (sent|simulated)/)).toBeVisible();
+  });
+
+  test("a generated label can be printed from its preview", async ({ page }, testInfo) => {
+    test.skip(desktopOnly(testInfo), "Functional flow runs once in the desktop project.");
+    const generated = await createImportedLabel(page.request);
+    await gotoReady(page, "/labels");
+    await page.getByPlaceholder("Search records…").fill(generated.labelUid);
+    await page.getByText(generated.labelUid, { exact: true }).first().click();
+    await page.getByRole("button", { name: "Print Selected Label" }).click();
+    await expect(page.getByRole("alertdialog")).toContainText(generated.labelUid);
+    await page.getByRole("button", { name: "Print Label", exact: true }).click();
+    await expect(page.getByText(/Print (sent|simulated)/)).toBeVisible();
   });
 
   test("theme selection persists after reload", async ({ page }, testInfo) => {

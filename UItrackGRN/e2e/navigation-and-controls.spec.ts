@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { desktopOnly, gotoReady } from "./helpers";
 
 test.describe("navigation and operational controls", () => {
@@ -24,7 +26,7 @@ test.describe("navigation and operational controls", () => {
     await expect(page.getByText("Notifications", { exact: true })).toBeVisible();
     await expect(page.locator("[data-radix-popper-content-wrapper] li").first()).toBeVisible();
 
-    await page.getByRole("button", { name: /Development Administrator/ }).click();
+    await page.getByRole("button", { name: "User menu" }).click();
     await page.getByRole("menuitem", { name: "Configuration" }).click();
     await expect(page).toHaveURL(/\/configuration$/);
     await page.getByRole("button", { name: "Collapse" }).click();
@@ -51,6 +53,113 @@ test.describe("navigation and operational controls", () => {
     await expect(page.getByText("Page 2 /")).toBeVisible();
   });
 
+  test("table, content, sidebar and app footer keep independent scroll positions", async ({
+    page,
+  }) => {
+    await gotoReady(page, "/labels");
+    const main = page.getByTestId("app-content-scroll");
+    const sidebar = page.getByTestId("sidebar-scroll");
+    const tableScroll = page.getByTestId("data-table-scroll");
+    const tableHeader = tableScroll.locator("thead th").first();
+    const appFooter = page.getByTestId("app-footer");
+
+    const dimensions = await tableScroll.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+    const before = await page.evaluate(() => ({
+      document: document.documentElement.scrollTop,
+      main: document.querySelector<HTMLElement>('[data-testid="app-content-scroll"]')?.scrollTop,
+      sidebar: document.querySelector<HTMLElement>('[data-testid="sidebar-scroll"]')?.scrollTop,
+    }));
+    const headerBefore = await tableHeader.boundingBox();
+    expect(headerBefore).not.toBeNull();
+
+    await tableScroll.hover();
+    await page.mouse.wheel(0, 600);
+    await expect
+      .poll(() => tableScroll.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+
+    const after = await page.evaluate(() => ({
+      document: document.documentElement.scrollTop,
+      main: document.querySelector<HTMLElement>('[data-testid="app-content-scroll"]')?.scrollTop,
+      sidebar: document.querySelector<HTMLElement>('[data-testid="sidebar-scroll"]')?.scrollTop,
+    }));
+    expect(after).toEqual(before);
+    const headerAfter = await tableHeader.boundingBox();
+    expect(Math.abs((headerAfter?.y ?? 0) - (headerBefore?.y ?? 0))).toBeLessThanOrEqual(2);
+    await expect(page.getByTestId("data-table-footer")).toBeVisible();
+    await expect(appFooter.getByText("TrackGRN")).toBeVisible();
+    await expect(appFooter.getByText("v1.1.2")).toBeVisible();
+    await expect(appFooter.getByText("Powered by MAHAD GLOBUS INDIA")).toBeVisible();
+    const footerBox = await appFooter.boundingBox();
+    expect(footerBox).not.toBeNull();
+    expect(Math.round((footerBox?.y ?? 0) + (footerBox?.height ?? 0))).toBe(
+      page.viewportSize()?.height,
+    );
+  });
+
+  test("client name and uploaded logo persist to header, footer and login", async ({ page }) => {
+    const clientName = "Playwright Client Industries";
+    const logoPath = fileURLToPath(new URL("../public/branding/AppLogo.png", import.meta.url));
+    await gotoReady(page, "/configuration");
+    const accessToken = await page.evaluate(() => localStorage.getItem("trackgrn-access-token"));
+    expect(accessToken).not.toBeNull();
+    const original = await page.evaluate(async (token) => {
+      const response = await fetch("/api/configuration", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error(`Configuration read failed: ${response.status}`);
+      return await response.json();
+    }, accessToken);
+
+    const restorePayload = {
+      identificationStrategy: original.identificationStrategy,
+      businessRules: original.businessRules,
+      labelConfiguration: original.labelConfiguration,
+      plantConfiguration: original.plantConfiguration,
+      importConfiguration: original.importConfiguration,
+    };
+
+    try {
+      await page.getByRole("tab", { name: "Plant & Hardware" }).click();
+      await page.getByLabel("Client name").fill(clientName);
+      await page.locator("#client-logo-upload").setInputFiles(logoPath);
+      await expect(page.getByRole("img", { name: "Client logo preview" })).toBeVisible();
+      await page.getByRole("button", { name: "Save Changes" }).click();
+      await expect(page.getByText("Configuration saved to SQL Server")).toBeVisible();
+      await expect(page.getByLabel("Configured client").getByText(clientName)).toBeVisible();
+      await expect(page.getByTestId("app-footer").getByText(clientName)).toBeVisible();
+
+      await page.evaluate(() => localStorage.clear());
+      const loginPage = await page.context().newPage();
+      await loginPage.goto("/login");
+      await loginPage.locator('html[data-hydrated="true"]').waitFor();
+      const loginBranding = loginPage.getByTestId("login-client-branding");
+      await expect(loginBranding.getByText(clientName)).toBeVisible();
+      await expect(loginBranding.getByRole("img", { name: `${clientName} logo` })).toBeVisible();
+      await loginPage.close();
+    } finally {
+      const restored = await page.evaluate(
+        async ({ token, payload }) => {
+          const response = await fetch("/api/configuration", {
+            method: "PUT",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+          return response.ok;
+        },
+        { token: accessToken, payload: restorePayload },
+      );
+      expect(restored).toBeTruthy();
+    }
+  });
+
   test("report generation and configuration save provide feedback", async ({ page }) => {
     await gotoReady(page, "/reports");
     await page.getByRole("button", { name: "Generate" }).first().click();
@@ -62,6 +171,114 @@ test.describe("navigation and operational controls", () => {
     await expect(stationGuard).toBeChecked();
     await page.getByRole("button", { name: "Save Changes" }).click();
     await expect(page.getByText("Configuration saved to SQL Server")).toBeVisible();
+  });
+
+  test("printer test action dispatches a standalone label", async ({ page }) => {
+    await gotoReady(page, "/labels");
+    await page.getByRole("button", { name: "Print Test Label" }).click();
+    await expect(page.getByText(/Test label (simulated|sent to printer)/)).toBeVisible();
+    await expect(page.getByText(/TEST-\d{8}-\d{6} →/)).toBeVisible();
+  });
+
+  test("printer configuration can be saved and tested from the UI", async ({ page }) => {
+    await page.route("**/api/configuration/printer/agents/discover", async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          scannedAt: new Date().toISOString(),
+          scannedHosts: 254,
+          networks: [
+            {
+              interfaceName: "Plant Wi-Fi",
+              localAddress: "192.168.1.3",
+              subnet: "192.168.1.0/24",
+            },
+          ],
+          agents: [
+            {
+              host: "192.168.1.24",
+              port: 17891,
+              machineName: "PACKING-LAPTOP-02",
+              version: "1.0.0",
+              source: "TrackGRN Agent · Plant Wi-Fi",
+              latencyMs: 12,
+              printers: ["ZDesigner ZD230-203dpi ZPL"],
+            },
+          ],
+        }),
+      });
+    });
+    await gotoReady(page, "/configuration");
+    await page.getByRole("tab", { name: "Plant & Hardware" }).click();
+
+    await page.getByLabel("Printer connection mode").click();
+    await page.getByRole("option", { name: "Network printer (IP / port 9100)" }).click();
+    await expect(page.getByRole("button", { name: "Find Printer IP" })).toBeVisible();
+
+    await page.getByLabel("Printer connection mode").click();
+    await page.getByRole("option", { name: "Print locally via installed Agent" }).click();
+    await expect(page.getByRole("button", { name: "Find Printer IP" })).toBeHidden();
+    const installer = page.getByRole("link", { name: "Download MSI" });
+    await expect(installer).toHaveAttribute("download", "");
+    await expect(installer).toHaveAttribute("href", /\/downloads\/TrackGRN-PrintAgent\.msi$/);
+    const downloadPromise = page.waitForEvent("download");
+    await installer.click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("TrackGRN-PrintAgent.msi");
+    const downloadPath = await download.path();
+    expect(downloadPath).not.toBeNull();
+    expect((await stat(downloadPath!)).size).toBeGreaterThan(30_000_000);
+    await page.getByRole("button", { name: "Find Installed Print Agents" }).click();
+    await expect(page.getByText("PACKING-LAPTOP-02")).toBeVisible();
+    await expect(page.getByText("ZDesigner ZD230-203dpi ZPL")).toBeVisible();
+    await page.getByRole("button", { name: "Use this printer" }).click();
+    await expect(page.getByLabel("Print Agent IP or hostname")).toHaveValue("192.168.1.24");
+    await expect(page.getByLabel("Printer name")).toHaveValue("ZDesigner ZD230-203dpi ZPL");
+
+    await page.getByLabel("Printer connection mode").click();
+    await page.getByRole("option", { name: "Simulation (no physical print)" }).click();
+    await page.getByLabel("Printer name").fill("SQL Test Printer");
+    await page.getByRole("button", { name: "Save & Test Printer" }).click();
+    await expect(page.getByText("Printer saved and test label dispatched")).toBeVisible();
+    await page.reload();
+    await page.locator('html[data-hydrated="true"]').waitFor();
+    await page.getByRole("tab", { name: "Plant & Hardware" }).click();
+    await expect(page.getByText("Simulation · SQL Test Printer")).toBeVisible();
+  });
+
+  test("installed local agent dispatches a physical Zebra test label", async ({ page }) => {
+    test.skip(
+      process.env["TRACKGRN_PHYSICAL_PRINTER"] !== "1",
+      "Physical printer tests are opt-in.",
+    );
+    const printerName =
+      process.env["TRACKGRN_PHYSICAL_PRINTER_NAME"] ?? "ZDesigner ZD230-203dpi ZPL";
+
+    await gotoReady(page, "/configuration");
+    await page.getByRole("tab", { name: "Plant & Hardware" }).click();
+    try {
+      await page.getByLabel("Printer connection mode").click();
+      await page.getByRole("option", { name: "Print locally via installed Agent" }).click();
+      await page.getByRole("button", { name: "Find Installed Print Agents" }).click();
+      const printerRow = page.getByText(printerName, { exact: true }).locator("..");
+      await expect(printerRow).toBeVisible({ timeout: 20_000 });
+      await printerRow.getByRole("button", { name: "Use this printer" }).click();
+      await page.getByRole("button", { name: "Save & Test Printer" }).click();
+      await expect(page.getByText("Printer saved and test label dispatched").last()).toBeVisible({
+        timeout: 15_000,
+      });
+    } finally {
+      await page.getByLabel("Printer connection mode").click();
+      await page.getByRole("option", { name: "Simulation (no physical print)" }).click();
+      await page.getByLabel("Printer name").fill("SQL Test Printer");
+      const resetResponse = page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/configuration/printer/configure-and-test") &&
+          response.request().method() === "POST",
+      );
+      await page.getByRole("button", { name: "Save & Test Printer" }).click();
+      expect((await resetResponse).ok()).toBeTruthy();
+    }
   });
 
   test("offline mode warns that issue transactions require connectivity", async ({

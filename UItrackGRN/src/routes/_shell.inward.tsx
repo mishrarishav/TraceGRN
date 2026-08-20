@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, PackageCheck, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -11,18 +11,19 @@ import { StatCard } from "@/components/common/StatCard";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Button } from "@/components/ui/button";
-import { inwardMaterial, scanErrorMessage, scanLabel } from "@/services/api";
+import { getLabels, inwardMaterial, scanErrorMessage, scanLabel } from "@/services/api";
+import { createRuntimeId } from "@/lib/id";
 import type { MaterialLabel } from "@/types";
 
 export const Route = createFileRoute("/_shell/inward")({
   head: () => ({
     meta: [
-      { title: "Material Inward — TraceFlow" },
+      { title: "Material Inward — TrackGRN" },
       {
         name: "description",
         content: "Scan QR labels to confirm physical receipt into the material store.",
       },
-      { property: "og:title", content: "Material Inward — TraceFlow" },
+      { property: "og:title", content: "Material Inward — TrackGRN" },
       { property: "og:description", content: "Handheld scanning workflow for material inward." },
     ],
   }),
@@ -40,9 +41,13 @@ interface LogEntry {
 }
 
 function InwardPage() {
+  const queryClient = useQueryClient();
   const [current, setCurrent] = useState<MaterialLabel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
+  const { data: labels = [] } = useQuery({ queryKey: ["labels"], queryFn: getLabels });
+  const simulationLabel =
+    labels.find((label) => label.status === "Generated" || label.status === "Printed") ?? labels[0];
 
   const push = (entry: LogEntry) => setLog((l) => [entry, ...l].slice(0, 25));
 
@@ -59,7 +64,7 @@ function InwardPage() {
         setError(message);
         toast.error("Scan rejected", { description: `${code} · ${message}` });
         push({
-          id: crypto.randomUUID(),
+          id: createRuntimeId("scan"),
           labelUid: code,
           material: "—",
           qty: "—",
@@ -71,11 +76,12 @@ function InwardPage() {
       }
       setError(null);
       setCurrent(res.label);
+      void queryClient.invalidateQueries({ queryKey: ["labels"] });
       toast.success("Material inwarded", {
         description: `${res.label.labelUid} received into store`,
       });
       push({
-        id: crypto.randomUUID(),
+        id: createRuntimeId("scan"),
         labelUid: res.label.labelUid,
         material: res.label.materialNumber,
         qty: `${res.label.quantity} ${res.label.uom}`,
@@ -90,7 +96,7 @@ function InwardPage() {
       setError(message);
       toast.error("Inward failed", { description: `${code} · ${message}` });
       push({
-        id: crypto.randomUUID(),
+        id: createRuntimeId("scan"),
         labelUid: code,
         material: "—",
         qty: "—",
@@ -126,7 +132,7 @@ function InwardPage() {
               busy={scan.isPending}
               tone="success"
               hint="Trigger the Zebra MC9300 or type the label UID and press Enter."
-              suggestion="LBL-00003461"
+              suggestion={simulationLabel?.labelUid}
             />
           </div>
 

@@ -38,8 +38,12 @@ public sealed class GrnHeader : BaseEntity
 {
     public required string GrnNumber { get; set; }
     public DateOnly GrnDate { get; set; }
+    public Guid? VendorId { get; set; }
+    public Vendor? Vendor { get; set; }
     public string? VendorCode { get; set; }
     public string? VendorName { get; set; }
+    public string? InvoiceNumber { get; set; }
+    public DateOnly? InvoiceDate { get; set; }
     public string? Plant { get; set; }
     public string? StorageLocation { get; set; }
     public string? PurchaseOrder { get; set; }
@@ -56,6 +60,10 @@ public sealed class GrnLine : BaseEntity
     public decimal ReceivedQuantity { get; set; }
     public decimal PackingStandard { get; set; }
     public string? BatchNumber { get; set; }
+    public string? BinLocation { get; set; }
+    public DateOnly? ManufacturingDate { get; set; }
+    public DateOnly? ExpiryDate { get; set; }
+    public int? ExpectedLabelCount { get; set; }
     public required string Uom { get; set; }
     public required string BusinessKeyHash { get; set; }
     public Guid IdentificationStrategyId { get; set; }

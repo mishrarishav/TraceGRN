@@ -12,6 +12,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Serilog;
 
+var printerTestMode = args.Contains("--printer-test", StringComparer.OrdinalIgnoreCase);
 var maintenanceMode = args.Contains("--migrate", StringComparer.OrdinalIgnoreCase)
     || args.Contains("--seed", StringComparer.OrdinalIgnoreCase);
 
@@ -28,7 +29,8 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IRequestContext, RequestContext>();
 builder.Services.AddScoped<IAuditWriter, AuditWriter>();
 builder.Services.Configure<PrinterOptions>(builder.Configuration.GetSection(PrinterOptions.SectionName));
-builder.Services.AddSingleton<ILabelPrinter, LabelPrinter>();
+builder.Services.AddScoped<ILabelPrinter, LabelPrinter>();
+builder.Services.AddSingleton<IPrinterDiscoveryService, PrinterDiscoveryService>();
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 builder.Services.AddControllers().AddJsonOptions(options =>
@@ -103,6 +105,27 @@ builder.Services.AddCors(options => options.AddPolicy("Frontend", policy =>
 
 var app = builder.Build();
 
+if (printerTestMode)
+{
+    await using var printerScope = app.Services.CreateAsyncScope();
+    var printer = printerScope.ServiceProvider.GetRequiredService<ILabelPrinter>();
+    var labelUid = $"TEST-{DateTime.Now:yyyyMMdd-HHmmss}";
+    var result = await printer.PrintAsync(new LabelPrintJob(
+        labelUid,
+        "M06030952",
+        "TEST LABEL - PRINTER VERIFICATION",
+        "TEST-NO-DB",
+        "TEST-BATCH",
+        200m,
+        "PC",
+        1,
+        1), CancellationToken.None);
+    Log.Information("Printer test {LabelUid} sent using {Mode} to {Printer}; simulated={Simulated}",
+        labelUid, result.Mode, result.Printer, result.Simulated);
+    await Log.CloseAndFlushAsync();
+    return;
+}
+
 var testBootstrap = app.Environment.IsEnvironment("Testing");
 if (maintenanceMode || testBootstrap)
 {
@@ -130,12 +153,16 @@ app.UseExceptionHandler();
 app.UseSerilogRequestLogging();
 app.UseSwagger();
 app.UseSwaggerUI();
+app.UseStaticFiles();
 app.UseHttpsRedirection();
 app.UseCors("Frontend");
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapHealthChecks("/health/live");
 app.MapControllers();
+
+app.Lifetime.ApplicationStarted.Register(() =>
+    Log.Information("TrackGRN API ready on {Addresses}", string.Join(", ", app.Urls)));
 
 await app.RunAsync();
 

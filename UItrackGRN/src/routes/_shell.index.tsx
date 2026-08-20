@@ -39,12 +39,12 @@ import { getDashboardData } from "@/services/api";
 export const Route = createFileRoute("/_shell/")({
   head: () => ({
     meta: [
-      { title: "Operations Dashboard — TraceFlow" },
+      { title: "Operations Dashboard — TrackGRN" },
       {
         name: "description",
         content: "Live GRN, labelling, inward and issue metrics for plant material traceability.",
       },
-      { property: "og:title", content: "Operations Dashboard — TraceFlow" },
+      { property: "og:title", content: "Operations Dashboard — TrackGRN" },
       { property: "og:description", content: "Live GRN, labelling, inward and issue metrics." },
     ],
   }),

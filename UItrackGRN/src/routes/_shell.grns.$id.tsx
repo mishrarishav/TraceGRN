@@ -35,12 +35,12 @@ import type { GRNLine, MaterialLabel, TraceStep } from "@/types";
 export const Route = createFileRoute("/_shell/grns/$id")({
   head: ({ params }) => ({
     meta: [
-      { title: `GRN ${params.id} — TraceFlow` },
+      { title: `GRN ${params.id} — TrackGRN` },
       {
         name: "description",
         content: `Line items, labels and revision history for goods receipt note ${params.id}.`,
       },
-      { property: "og:title", content: `GRN ${params.id} — TraceFlow` },
+      { property: "og:title", content: `GRN ${params.id} — TrackGRN` },
       {
         property: "og:description",
         content: `Material lines and label status for GRN ${params.id}.`,
@@ -108,6 +108,11 @@ function GRNDetailPage() {
     },
     { key: "batch", header: "Batch", render: (l) => <span className="num">{l.batch}</span> },
     {
+      key: "bin",
+      header: "Bin",
+      render: (l) => <span className="num">{l.binLocation || "—"}</span>,
+    },
+    {
       key: "recv",
       header: "Received",
       sortValue: (l) => l.receivedQty,
@@ -118,7 +123,16 @@ function GRNDetailPage() {
       header: "Pack Std",
       render: (l) => <span className="num">{l.packingStandard}</span>,
     },
-    { key: "labels", header: "Labels", render: (l) => <span className="num">{l.labels}</span> },
+    {
+      key: "labels",
+      header: "Labels",
+      render: (l) => (
+        <span className="num">
+          {l.labels}
+          {l.expectedLabelCount != null ? ` / ${l.expectedLabelCount}` : ""}
+        </span>
+      ),
+    },
     {
       key: "issued",
       header: "Issued",
@@ -196,6 +210,11 @@ function GRNDetailPage() {
   const meta = [
     { icon: Building2, label: "Vendor", value: `${grn.vendor} (${grn.vendorCode})` },
     { icon: Receipt, label: "PO Number", value: grn.poNumber },
+    {
+      icon: Receipt,
+      label: "Invoice",
+      value: [grn.invoiceNumber, grn.invoiceDate].filter(Boolean).join(" · ") || "—",
+    },
     { icon: CalendarDays, label: "GRN Date", value: grn.grnDate },
     { icon: MapPin, label: "Plant / Storage", value: `${grn.plant} · ${grn.storageLocation}` },
     { icon: FileSpreadsheet, label: "Import Batch", value: grn.importBatch },

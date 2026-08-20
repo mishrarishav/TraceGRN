@@ -37,11 +37,23 @@ export interface Material {
   description: string;
   uom: string;
   packingStandard: number;
+  partNumber?: string | null;
+  defaultBinLocation?: string | null;
+  openingQuantity?: number | null;
   totalReceived: number;
   totalIssued: number;
   available: number;
   latestGrn: string;
   status: RecordStatus;
+}
+
+export interface Vendor {
+  id: string;
+  vendorCode: string;
+  vendorName: string;
+  aliases: string[];
+  grnCount: number;
+  status: "Active" | "Inactive";
 }
 
 export interface GRNLine {
@@ -55,6 +67,11 @@ export interface GRNLine {
   issuedQty: number;
   availableQty: number;
   batch: string;
+  uom?: string;
+  binLocation?: string | null;
+  manufacturingDate?: string | null;
+  expiryDate?: string | null;
+  expectedLabelCount?: number | null;
   status: RecordStatus;
 }
 
@@ -65,6 +82,8 @@ export interface GRNHeader {
   vendorCode: string;
   poNumber: string;
   plant: string;
+  invoiceNumber?: string;
+  invoiceDate?: string | null;
   storageLocation: string;
   importBatch: string;
   materials: number;
@@ -108,6 +127,15 @@ export interface ImportRowResult {
   packingStandard: number;
   batch: string;
   plant: string;
+  uom?: string;
+  vendorCode?: string;
+  vendorName?: string;
+  invoiceNumber?: string;
+  invoiceDate?: string | null;
+  binLocation?: string;
+  manufacturingDate?: string | null;
+  expiryDate?: string | null;
+  expectedLabelCount?: number | null;
   status: RecordStatus;
   reason?: string | undefined;
 }

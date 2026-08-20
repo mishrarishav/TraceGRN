@@ -180,6 +180,13 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
                         .HasColumnType("nvarchar(100)")
                         .HasColumnName("GRNNumber");
 
+                    b.Property<DateOnly?>("InvoiceDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("InvoiceNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<string>("Plant")
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
@@ -199,6 +206,9 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<Guid?>("VendorId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("VendorName")
                         .HasMaxLength(250)
                         .HasColumnType("nvarchar(250)");
@@ -206,6 +216,8 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("GrnNumber");
+
+                    b.HasIndex("VendorId");
 
                     b.HasIndex("GrnNumber", "Plant", "StorageLocation");
 
@@ -222,6 +234,10 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<string>("BinLocation")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<string>("BusinessKeyHash")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -229,6 +245,12 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<int?>("ExpectedLabelCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateOnly?>("ExpiryDate")
+                        .HasColumnType("date");
 
                     b.Property<Guid>("GrnHeaderId")
                         .HasColumnType("uniqueidentifier");
@@ -241,6 +263,9 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
+
+                    b.Property<DateOnly?>("ManufacturingDate")
+                        .HasColumnType("date");
 
                     b.Property<Guid>("MaterialId")
                         .HasColumnType("uniqueidentifier");
@@ -538,6 +563,10 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<string>("DefaultBinLocation")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<decimal?>("DefaultPackingStandard")
                         .HasPrecision(18, 4)
                         .HasColumnType("decimal(18,4)");
@@ -552,6 +581,14 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("MaterialNumber")
                         .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<decimal?>("OpeningQuantity")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<string>("PartNumber")
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
@@ -978,6 +1015,67 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
                     b.ToTable("Users", (string)null);
                 });
 
+            modelBuilder.Entity("APItrackGRN.Domain.Entities.Vendor", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("VendorCode")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("VendorName")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("VendorCode")
+                        .IsUnique();
+
+                    b.ToTable("Vendors", (string)null);
+                });
+
+            modelBuilder.Entity("APItrackGRN.Domain.Entities.VendorAlias", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AliasName")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("VendorId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("VendorId", "AliasName")
+                        .IsUnique();
+
+                    b.ToTable("VendorAliases", (string)null);
+                });
+
             modelBuilder.Entity("APItrackGRN.Domain.Entities.AuditLog", b =>
                 {
                     b.HasOne("APItrackGRN.Domain.Entities.User", "User")
@@ -986,6 +1084,16 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("APItrackGRN.Domain.Entities.GrnHeader", b =>
+                {
+                    b.HasOne("APItrackGRN.Domain.Entities.Vendor", "Vendor")
+                        .WithMany("GrnHeaders")
+                        .HasForeignKey("VendorId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Vendor");
                 });
 
             modelBuilder.Entity("APItrackGRN.Domain.Entities.GrnLine", b =>
@@ -1165,6 +1273,17 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
                     b.Navigation("Role");
                 });
 
+            modelBuilder.Entity("APItrackGRN.Domain.Entities.VendorAlias", b =>
+                {
+                    b.HasOne("APItrackGRN.Domain.Entities.Vendor", "Vendor")
+                        .WithMany("Aliases")
+                        .HasForeignKey("VendorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Vendor");
+                });
+
             modelBuilder.Entity("APItrackGRN.Domain.Entities.GrnHeader", b =>
                 {
                     b.Navigation("Lines");
@@ -1195,6 +1314,13 @@ namespace APItrackGRN.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("APItrackGRN.Domain.Entities.Role", b =>
                 {
                     b.Navigation("Users");
+                });
+
+            modelBuilder.Entity("APItrackGRN.Domain.Entities.Vendor", b =>
+                {
+                    b.Navigation("Aliases");
+
+                    b.Navigation("GrnHeaders");
                 });
 #pragma warning restore 612, 618
         }

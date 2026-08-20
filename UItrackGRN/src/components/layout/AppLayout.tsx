@@ -5,6 +5,7 @@ import { Download, WifiOff, X } from "lucide-react";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { MobileNav } from "@/components/layout/MobileNav";
+import { AppFooter } from "@/components/layout/AppFooter";
 import { Button } from "@/components/ui/button";
 
 interface InstallPromptEvent extends Event {
@@ -51,12 +52,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex h-dvh overflow-hidden bg-background">
       <AppSidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
         <TopHeader />
         {offline ? (
-          <div className="flex items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          <div className="flex shrink-0 items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
             <WifiOff className="h-4 w-4" />
             <span className="font-medium">You are offline.</span>
             <span className="text-destructive/80">
@@ -65,10 +66,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
         ) : null}
         {installPrompt ? (
-          <div className="flex items-center gap-3 border-b border-border bg-surface px-4 py-2 text-sm">
+          <div className="flex shrink-0 items-center gap-3 border-b border-border bg-surface px-4 py-2 text-sm">
             <Download className="h-4 w-4 text-primary" />
             <span className="flex-1 truncate">
-              Install <span className="font-semibold">TraceFlow</span> for a full-screen scanner
+              Install <span className="font-semibold">TrackGRN</span> for a full-screen scanner
               experience.
             </span>
             <Button size="sm" variant="outline" onClick={() => void install()}>
@@ -90,10 +91,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.22 }}
-          className="flex-1 space-y-6 p-4 pb-24 sm:p-6 md:pb-6"
+          data-testid="app-content-scroll"
+          className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain p-4 sm:p-6"
         >
           {children}
         </motion.main>
+        <AppFooter />
       </div>
       <MobileNav />
     </div>

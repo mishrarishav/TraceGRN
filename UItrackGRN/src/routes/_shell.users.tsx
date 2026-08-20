@@ -37,7 +37,7 @@ import {
 import type { Role, User } from "@/types";
 
 export const Route = createFileRoute("/_shell/users")({
-  head: () => ({ meta: [{ title: "Users & Roles — TraceFlow" }] }),
+  head: () => ({ meta: [{ title: "Users & Roles — TrackGRN" }] }),
   component: UsersPage,
 });
 

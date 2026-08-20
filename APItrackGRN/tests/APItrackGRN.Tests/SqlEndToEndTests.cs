@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using APItrackGRN.Domain.Enums;
 using APItrackGRN.Infrastructure.Persistence;
@@ -59,6 +60,97 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
         Assert.Equal(1, stored.PrintCount);
         Assert.Equal(1, await db.MaterialTransactions.CountAsync(x => x.LabelId == stored.Id && x.TransactionType == TransactionType.Issue));
         Assert.True(await db.AuditLogs.CountAsync(x => x.EntityId == label.LabelUid) >= 3);
+    }
+
+    [Fact]
+    public async Task Standalone_printer_test_dispatches_without_creating_a_material_label()
+    {
+        using var client = await factory.CreateAuthenticatedClient();
+        await using var beforeScope = factory.Services.CreateAsyncScope();
+        var beforeDb = beforeScope.ServiceProvider.GetRequiredService<TrackGrnDbContext>();
+        var labelCountBefore = await beforeDb.MaterialLabels.CountAsync();
+
+        var response = await client.PostAsync("/api/configuration/printer/test", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var responseJson = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.True(responseJson.RootElement.GetProperty("ok").GetBoolean());
+        Assert.True(responseJson.RootElement.GetProperty("simulated").GetBoolean());
+        Assert.Equal("SQL Test Printer", responseJson.RootElement.GetProperty("printer").GetString());
+        Assert.StartsWith("TEST-", responseJson.RootElement.GetProperty("labelUid").GetString());
+
+        await using var afterScope = factory.Services.CreateAsyncScope();
+        var afterDb = afterScope.ServiceProvider.GetRequiredService<TrackGrnDbContext>();
+        Assert.Equal(labelCountBefore, await afterDb.MaterialLabels.CountAsync());
+        Assert.True(await afterDb.AuditLogs.AnyAsync(x => x.Action == "PrinterTestDispatched"));
+    }
+
+    [Fact]
+    public async Task Printer_configuration_is_tested_then_persisted_in_sql_server()
+    {
+        using var client = await factory.CreateAuthenticatedClient();
+        var missingHost = await client.PostAsJsonAsync("/api/configuration/printer/configure-and-test", new
+        {
+            mode = "RawTcp",
+            printerName = "Network Zebra",
+            host = "",
+            port = 9100,
+            dpi = 203,
+            connectionTimeoutSeconds = 5
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, missingHost.StatusCode);
+
+        var configure = await client.PostAsJsonAsync("/api/configuration/printer/configure-and-test", new
+        {
+            mode = "Simulation",
+            printerName = "SQL Test Printer",
+            host = (string?)null,
+            port = 9100,
+            dpi = 203,
+            connectionTimeoutSeconds = 5
+        });
+        Assert.Equal(HttpStatusCode.OK, configure.StatusCode);
+        using var result = JsonDocument.Parse(await configure.Content.ReadAsStringAsync());
+        Assert.True(result.RootElement.GetProperty("saved").GetBoolean());
+        Assert.True(result.RootElement.GetProperty("simulated").GetBoolean());
+
+        var configuration = await client.GetFromJsonAsync<JsonElement>("/api/configuration");
+        var printing = configuration.GetProperty("printing");
+        Assert.Equal("Simulation", printing.GetProperty("mode").GetString());
+        Assert.Equal("SQL Test Printer", printing.GetProperty("printerName").GetString());
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TrackGrnDbContext>();
+        Assert.True(await db.ApplicationSettings.AnyAsync(x => x.Key == "PrinterConfiguration"));
+        Assert.True(await db.AuditLogs.AnyAsync(x => x.Action == "PrinterConfigured"));
+    }
+
+    [Fact]
+    public async Task Public_branding_returns_the_sql_backed_client_name_and_logo_without_login()
+    {
+        const string logo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB";
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TrackGrnDbContext>();
+            var setting = await db.ApplicationSettings.SingleAsync(x => x.Key == "PlantConfiguration");
+            setting.ValueJson = JsonSerializer.Serialize(new
+            {
+                DefaultPlant = "1000",
+                DefaultStorageLocation = "RM01",
+                TimeZone = "Asia/Kolkata",
+                ClientName = "Test Client Industries",
+                ClientLogoDataUrl = logo
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var anonymousClient = factory.CreateClient();
+        var response = await anonymousClient.GetAsync("/api/system/branding");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var branding = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("TrackGRN", branding.GetProperty("appName").GetString());
+        Assert.Equal("1.1.2", branding.GetProperty("version").GetString());
+        Assert.Equal("Test Client Industries", branding.GetProperty("clientName").GetString());
+        Assert.Equal(logo, branding.GetProperty("clientLogoDataUrl").GetString());
     }
 
     [Fact]
@@ -138,6 +230,69 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
         Assert.Equal("BOX", material.Uom);
         Assert.False(material.IsActive);
         Assert.Equal(3, await db.AuditLogs.CountAsync(x => x.EntityName == "Material" && x.EntityId == id.ToString()));
+    }
+
+    [Fact]
+    public async Task Business_csv_headers_commit_invoice_vendor_bin_dates_and_expected_labels()
+    {
+        using var client = await factory.CreateAuthenticatedClient();
+        var grn = $"7{DateTime.UtcNow.Ticks.ToString()[^9..]}";
+        var content = string.Join('\n',
+            "Gr No,Gr date,Material,Material Description,Quantity,UOM,Vendor,Invo No,Inv Date,Sup Name,Bin loc,Mfg date,Exp Date,Pack Qty,No of Labels to print",
+            $"{grn},03.08.2025,M06030952,COMPRESSION BUMPER,\"1,000\",PC,1094852,2526KG0208,02.08.2025,Kumar Automates,210,01.08.2025,01.08.2027,200,5");
+        using var form = new MultipartFormDataContent();
+        using var file = new ByteArrayContent(Encoding.UTF8.GetBytes(content));
+        file.Headers.ContentType = MediaTypeHeaderValue.Parse("text/csv");
+        form.Add(file, "file", $"business-{grn}.csv");
+
+        var previewResponse = await client.PostAsync("/api/imports/preview", form);
+        Assert.True(previewResponse.StatusCode == HttpStatusCode.OK, await previewResponse.Content.ReadAsStringAsync());
+        using var previewJson = JsonDocument.Parse(await previewResponse.Content.ReadAsStringAsync());
+        var previewRow = previewJson.RootElement.GetProperty("rows")[0];
+        Assert.Equal("New", previewRow.GetProperty("status").GetString());
+        Assert.Equal(1000m, previewRow.GetProperty("quantity").GetDecimal());
+        Assert.Equal("1094852", previewRow.GetProperty("vendorCode").GetString());
+        Assert.Equal("2526KG0208", previewRow.GetProperty("invoiceNumber").GetString());
+        Assert.Equal("210", previewRow.GetProperty("binLocation").GetString());
+        Assert.Equal(5, previewRow.GetProperty("expectedLabelCount").GetInt32());
+
+        var batchId = previewJson.RootElement.GetProperty("batch").GetProperty("batchId").GetString();
+        var commit = await client.PostAsync($"/api/imports/{batchId}/commit", null);
+        Assert.True(commit.StatusCode == HttpStatusCode.OK, await commit.Content.ReadAsStringAsync());
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TrackGrnDbContext>();
+        var header = await db.GrnHeaders.AsNoTracking().Include(x => x.Vendor)
+            .SingleAsync(x => x.GrnNumber == grn);
+        Assert.Equal(new DateOnly(2025, 8, 3), header.GrnDate);
+        Assert.Equal("1094852", header.Vendor!.VendorCode);
+        Assert.Equal("2526KG0208", header.InvoiceNumber);
+        Assert.Equal(new DateOnly(2025, 8, 2), header.InvoiceDate);
+        var line = await db.GrnLines.AsNoTracking().Include(x => x.Labels)
+            .SingleAsync(x => x.GrnHeaderId == header.Id);
+        Assert.Equal("210", line.BinLocation);
+        Assert.Equal(new DateOnly(2025, 8, 1), line.ManufacturingDate);
+        Assert.Equal(new DateOnly(2027, 8, 1), line.ExpiryDate);
+        Assert.Equal(5, line.ExpectedLabelCount);
+        Assert.Equal(5, line.Labels.Count);
+        Assert.All(line.Labels, label => Assert.Equal(200m, label.LabelQuantity));
+    }
+
+    [Fact]
+    public async Task Business_master_seed_contains_pack_bin_quantity_and_vendor_aliases()
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TrackGrnDbContext>();
+        var material = await db.Materials.AsNoTracking().SingleAsync(x => x.MaterialNumber == "M06081352");
+        Assert.Equal(80m, material.DefaultPackingStandard);
+        Assert.Equal("519", material.PartNumber);
+        Assert.Equal("210", material.DefaultBinLocation);
+        Assert.Equal(30240m, material.OpeningQuantity);
+
+        var vendor = await db.Vendors.AsNoTracking().Include(x => x.Aliases)
+            .SingleAsync(x => x.VendorCode == "1094021");
+        Assert.Equal("KAMAL CED COATERS", vendor.VendorName);
+        Assert.Contains(vendor.Aliases, alias => alias.AliasName == "Kamal CED");
     }
 
     private static async Task<ImportedRow> ImportAndCommit(HttpClient client, string identity, decimal quantity, decimal packing)

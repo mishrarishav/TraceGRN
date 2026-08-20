@@ -28,7 +28,10 @@ export function MobileNav() {
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur md:hidden">
+    <div
+      data-testid="mobile-navigation"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur md:hidden"
+    >
       <div className="flex items-end">
         {item("/", "Home", Gauge)}
         {item("/inward", "Inward", PackageCheck)}

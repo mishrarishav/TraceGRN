@@ -16,13 +16,13 @@ import type { GRNHeader } from "@/types";
 export const Route = createFileRoute("/_shell/grns/")({
   head: () => ({
     meta: [
-      { title: "Goods Receipt Notes — TraceFlow" },
+      { title: "Goods Receipt Notes — TrackGRN" },
       {
         name: "description",
         content:
           "Browse imported SAP GRNs with received, labelled, inwarded and issued quantities.",
       },
-      { property: "og:title", content: "Goods Receipt Notes — TraceFlow" },
+      { property: "og:title", content: "Goods Receipt Notes — TrackGRN" },
       { property: "og:description", content: "Browse imported SAP GRNs and their material lines." },
     ],
   }),

@@ -31,13 +31,13 @@ import { downloadReport, getReports } from "@/services/api";
 export const Route = createFileRoute("/_shell/reports")({
   head: () => ({
     meta: [
-      { title: "Reports — TraceFlow" },
+      { title: "Reports — TrackGRN" },
       {
         name: "description",
         content:
           "Generate GRN, inventory, label, issue and traceability reports for any date range.",
       },
-      { property: "og:title", content: "Reports — TraceFlow" },
+      { property: "og:title", content: "Reports — TrackGRN" },
       { property: "og:description", content: "Operational and traceability reporting." },
     ],
   }),

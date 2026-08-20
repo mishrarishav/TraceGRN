@@ -1,4 +1,4 @@
-const CACHE_NAME = "traceflow-shell-v1";
+const CACHE_NAME = "trackgrn-shell-v1";
 const APP_SHELL = ["/", "/login", "/manifest.webmanifest", "/favicon.ico"];
 
 self.addEventListener("install", (event) => {

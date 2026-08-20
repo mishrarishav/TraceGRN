@@ -1,16 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Bell,
-  CircleHelp,
-  LogOut,
-  Menu,
-  Search,
-  Settings,
-  ShieldCheck,
-  UserRound,
-} from "lucide-react";
+import { Bell, CircleHelp, LogOut, Menu, Search, Settings, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -29,6 +20,7 @@ import { SidebarNav } from "@/components/layout/AppSidebar";
 import { BrandMark } from "@/components/layout/BrandMark";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { getDashboardData, getStoredUser, logout } from "@/services/api";
+import { useBranding } from "@/hooks/use-branding";
 
 export function TopHeader() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -42,6 +34,7 @@ export function TopHeader() {
   });
   const notifications = (dashboard?.activity ?? []).slice(0, 3);
   const currentUser = getStoredUser();
+  const { branding } = useBranding();
   const displayName = currentUser?.fullName ?? "TrackGRN User";
   const initials = displayName
     .split(" ")
@@ -68,7 +61,7 @@ export function TopHeader() {
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-background/85 px-3 backdrop-blur sm:px-4">
+    <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background/85 px-3 backdrop-blur sm:px-4">
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetTrigger asChild>
           <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open menu">
@@ -104,9 +97,23 @@ export function TopHeader() {
       </form>
 
       <div className="flex flex-1 items-center justify-end gap-1 sm:gap-2">
-        <span className="hidden items-center gap-1.5 rounded-full border border-amber-400/60 bg-amber-100 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-amber-900 uppercase dark:bg-amber-950 dark:text-amber-100 sm:inline-flex">
-          <ShieldCheck className="h-3.5 w-3.5" /> Live SQL
-        </span>
+        {branding.clientLogoDataUrl || branding.clientName ? (
+          <div
+            className="hidden h-9 max-w-48 items-center gap-2 rounded-lg border border-border bg-surface px-2 sm:flex"
+            aria-label="Configured client"
+          >
+            {branding.clientLogoDataUrl ? (
+              <img
+                src={branding.clientLogoDataUrl}
+                alt={branding.clientName ? `${branding.clientName} logo` : "Client logo"}
+                className="h-7 max-w-20 object-contain"
+              />
+            ) : null}
+            {branding.clientName ? (
+              <span className="truncate text-[11px] font-semibold">{branding.clientName}</span>
+            ) : null}
+          </div>
+        ) : null}
 
         <Popover>
           <PopoverTrigger asChild>
@@ -155,7 +162,7 @@ export function TopHeader() {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="h-9 gap-2 px-1.5 sm:px-2">
+            <Button variant="ghost" className="h-9 gap-2 px-1.5 sm:px-2" aria-label="User menu">
               <Avatar className="h-7 w-7">
                 <AvatarFallback className="bg-primary/15 text-xs font-semibold text-foreground">
                   {initials}

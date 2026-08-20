@@ -21,13 +21,13 @@ export const Route = createFileRoute("/_shell/traceability")({
   }),
   head: () => ({
     meta: [
-      { title: "Traceability — TraceFlow" },
+      { title: "Traceability — TrackGRN" },
       {
         name: "description",
         content:
           "Trace any label, batch, material or GRN through its full journey from SAP import to production issue.",
       },
-      { property: "og:title", content: "Traceability — TraceFlow" },
+      { property: "og:title", content: "Traceability — TrackGRN" },
       {
         property: "og:description",
         content: "Full material journey from GRN import to production issue.",

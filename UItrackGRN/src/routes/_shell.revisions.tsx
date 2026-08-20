@@ -12,12 +12,12 @@ import { getRevisions } from "@/services/api";
 export const Route = createFileRoute("/_shell/revisions")({
   head: () => ({
     meta: [
-      { title: "Revision History — TraceFlow" },
+      { title: "Revision History — TrackGRN" },
       {
         name: "description",
         content: "Quantity and field revisions applied to GRNs after the original SAP import.",
       },
-      { property: "og:title", content: "Revision History — TraceFlow" },
+      { property: "og:title", content: "Revision History — TrackGRN" },
       { property: "og:description", content: "GRN revisions with approval status." },
     ],
   }),

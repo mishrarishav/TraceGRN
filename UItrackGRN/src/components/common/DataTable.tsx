@@ -79,8 +79,11 @@ export function DataTable<T>({
   const slice = filtered.slice(current * pageSize, current * pageSize + pageSize);
 
   return (
-    <div className="panel overflow-hidden">
-      <div className="flex flex-col gap-3 border-b border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+    <div
+      data-testid="data-table"
+      className="panel flex min-h-0 max-h-[calc(100dvh-10rem)] flex-col overflow-hidden"
+    >
+      <div className="flex shrink-0 flex-col gap-3 border-b border-border bg-background/95 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 items-center gap-2">
           {searchable && searchKeys ? (
             <div className="relative w-full max-w-sm">
@@ -124,7 +127,10 @@ export function DataTable<T>({
       {slice.length === 0 ? (
         <EmptyState title="Nothing to show" description={emptyMessage} />
       ) : (
-        <div className="overflow-x-auto">
+        <div
+          data-testid="data-table-scroll"
+          className="min-h-0 max-h-[min(46dvh,24rem)] flex-auto overflow-auto overscroll-contain"
+        >
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-surface/60 text-left">
@@ -132,7 +138,7 @@ export function DataTable<T>({
                   <th
                     key={c.key}
                     className={cn(
-                      "px-4 py-2.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase",
+                      "sticky top-0 z-10 bg-surface px-4 py-2.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase shadow-sm",
                       c.className,
                     )}
                   >
@@ -187,7 +193,10 @@ export function DataTable<T>({
         </div>
       )}
 
-      <div className="flex flex-col gap-2 border-t border-border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div
+        data-testid="data-table-footer"
+        className="flex shrink-0 flex-col gap-2 border-t border-border bg-background/95 px-4 py-3 text-sm backdrop-blur sm:flex-row sm:items-center sm:justify-between"
+      >
         <p className="text-muted-foreground">
           Showing <span className="num text-foreground">{slice.length}</span> of{" "}
           <span className="num text-foreground">{filtered.length}</span> records

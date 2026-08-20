@@ -6,12 +6,15 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
+const apiProxy = process.env["TRACKGRN_API_PROXY"] ?? "http://127.0.0.1:5025";
+
 export default defineConfig({
   vite: {
     server: {
       proxy: {
-        "/api": "http://127.0.0.1:5025",
-        "/health": "http://127.0.0.1:5025",
+        "/api": apiProxy,
+        "/downloads": apiProxy,
+        "/health": apiProxy,
       },
     },
   },

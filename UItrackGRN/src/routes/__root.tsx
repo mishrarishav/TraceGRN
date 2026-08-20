@@ -80,15 +80,15 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "TraceFlow — Material Traceability System" },
+      { title: "TrackGRN — Material Traceability System" },
       {
         name: "description",
         content:
           "Track manufacturing material from SAP GRN import and QR labelling through inward, storage and store-to-production issue.",
       },
-      { name: "author", content: "TraceFlow" },
+      { name: "author", content: "TrackGRN" },
       { name: "theme-color", content: "#1f4fd8" },
-      { property: "og:title", content: "TraceFlow — Material Traceability System" },
+      { property: "og:title", content: "TrackGRN — Material Traceability System" },
       {
         property: "og:description",
         content: "Enterprise material traceability from SAP GRN import to production issue.",

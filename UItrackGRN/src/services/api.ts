@@ -13,8 +13,11 @@ import type {
   TraceResult,
   User,
 } from "@/types";
+import { createRuntimeId } from "@/lib/id";
 
 export const API_BASE_URL = import.meta.env["VITE_API_BASE_URL"] ?? "/api";
+export const PRINT_AGENT_INSTALLER_URL = `${API_BASE_URL.replace(/\/api\/?$/, "")}/downloads/TrackGRN-PrintAgent.msi`;
+export const APP_VERSION = "1.1.2";
 const ACCESS_TOKEN_KEY = "trackgrn-access-token";
 const REFRESH_TOKEN_KEY = "trackgrn-refresh-token";
 const USER_KEY = "trackgrn-user";
@@ -145,7 +148,7 @@ function getDeviceId() {
   if (!storage) return "TRACKGRN-WEB";
   let id = storage.getItem("trackgrn-device-id");
   if (!id) {
-    id = `WEB-${crypto.randomUUID()}`;
+    id = `WEB-${createRuntimeId("device")}`;
     storage.setItem("trackgrn-device-id", id);
   }
   return id;
@@ -203,7 +206,25 @@ export interface MaterialMutation {
   uom: string;
   packingStandard: number;
   isActive: boolean;
+  partNumber?: string;
+  defaultBinLocation?: string;
+  openingQuantity?: number | null;
 }
+
+export interface VendorMutation {
+  vendorCode: string;
+  vendorName: string;
+  aliases: string[];
+  isActive: boolean;
+}
+
+export const getVendors = () => apiRequest<import("@/types").Vendor[]>("/vendors");
+export const createVendor = (request: VendorMutation) =>
+  apiRequest<{ id: string }>("/vendors", { method: "POST", body: JSON.stringify(request) });
+export const updateVendor = (id: string, request: VendorMutation) =>
+  apiRequest<void>(`/vendors/${id}`, { method: "PUT", body: JSON.stringify(request) });
+export const deactivateVendor = (id: string) =>
+  apiRequest<void>(`/vendors/${id}`, { method: "DELETE" });
 
 export interface ImportPreviewResponse {
   batch: ImportBatch;
@@ -396,17 +417,98 @@ export interface SystemConfiguration {
   }[];
   businessRules: Record<string, boolean>;
   labelConfiguration: Record<string, string | number | boolean>;
-  plantConfiguration: Record<string, string>;
+  plantConfiguration: {
+    defaultPlant: string;
+    defaultStorageLocation: string;
+    timeZone: string;
+    clientName: string;
+    clientLogoDataUrl: string;
+  };
   importConfiguration: Record<string, string | number | boolean>;
   printing: {
     mode: string;
     printerName: string;
-    host?: string;
+    host: string | null;
     port: number;
     dpi: number;
+    connectionTimeoutSeconds: number;
     hardwareReady: boolean;
   };
 }
 export const getConfiguration = () => apiRequest<SystemConfiguration>("/configuration");
+
+export interface SystemBranding {
+  appName: string;
+  version: string;
+  clientName: string;
+  clientLogoDataUrl: string;
+}
+
+export const getSystemBranding = () => apiRequest<SystemBranding>("/system/branding");
 export const saveConfiguration = (request: unknown) =>
   apiRequest<void>("/configuration", { method: "PUT", body: JSON.stringify(request) });
+
+export interface PrinterTestResult {
+  ok: true;
+  labelUid: string;
+  mode: string;
+  printer: string;
+  simulated: boolean;
+  dpi: number;
+}
+
+export const testPrinter = () =>
+  apiRequest<PrinterTestResult>("/configuration/printer/test", { method: "POST" });
+
+export interface PrinterConfigurationRequest {
+  mode: "Simulation" | "WindowsSpooler" | "RawTcp" | "LocalAgent";
+  printerName: string;
+  host: string | null;
+  port: number;
+  dpi: number;
+  connectionTimeoutSeconds: number;
+}
+
+export const configureAndTestPrinter = (request: PrinterConfigurationRequest) =>
+  apiRequest<PrinterTestResult & { saved: true; host: string | null; port: number }>(
+    "/configuration/printer/configure-and-test",
+    { method: "POST", body: JSON.stringify(request) },
+  );
+
+export interface PrinterDiscoveryResult {
+  scannedAt: string;
+  scannedHosts: number;
+  networks: {
+    interfaceName: string;
+    localAddress: string;
+    subnet: string;
+  }[];
+  printers: {
+    host: string;
+    port: number;
+    printerName: string;
+    source: string;
+    latencyMs: number;
+  }[];
+}
+
+export const discoverNetworkPrinters = () =>
+  apiRequest<PrinterDiscoveryResult>("/configuration/printer/discover");
+
+export interface PrintAgentDiscoveryResult {
+  scannedAt: string;
+  scannedHosts: number;
+  networks: PrinterDiscoveryResult["networks"];
+  agents: {
+    host: string;
+    port: number;
+    machineName: string;
+    version: string;
+    source: string;
+    latencyMs: number;
+    printers: string[];
+  }[];
+}
+
+export const discoverPrintAgents = () =>
+  apiRequest<PrintAgentDiscoveryResult>("/configuration/printer/agents/discover");

@@ -1,6 +1,6 @@
 # APItrackGRN
 
-ASP.NET Core 8 and SQL Server foundation for the TraceFlow/TrackGRN material traceability application.
+ASP.NET Core 8 and SQL Server foundation for the TrackGRN/TrackGRN material traceability application.
 
 ## Structure
 
@@ -53,6 +53,18 @@ The seed is repeatable and includes:
 - 10 labels for M01, with 3 issued and an expected 7,000 PCS balance
 
 The password in `appsettings.Development.json` is for local development only. Production must supply `Jwt__Key` and `Seed__AdminPassword` through a secret store or environment variables.
+
+## Local Windows print agent
+
+For a USB or Windows printer connected to another laptop, choose **Print locally via installed Agent** under **Configuration > Plant & Hardware**. Download the MSI there, install it as Administrator on the printer laptop, scan for installed agents, and select the required Windows printer queue. The service starts with Windows and accepts print jobs only on TCP port `17891` from the local subnet.
+
+Rebuild the self-contained MSI and copy it into the API download directory with:
+
+```powershell
+npm.cmd run print-agent:installer
+```
+
+The installer uses the open-source WiX Toolset `4.0.6`, installs the `TrackGRNPrintAgent` Windows service, and creates the local-subnet firewall exception automatically.
 
 ## API endpoints currently available
 

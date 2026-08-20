@@ -10,6 +10,8 @@ public sealed class TrackGrnDbContext(DbContextOptions<TrackGrnDbContext> option
     public DbSet<User> Users => Set<User>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<Material> Materials => Set<Material>();
+    public DbSet<Vendor> Vendors => Set<Vendor>();
+    public DbSet<VendorAlias> VendorAliases => Set<VendorAlias>();
     public DbSet<Station> Stations => Set<Station>();
     public DbSet<PackingRule> PackingRules => Set<PackingRule>();
     public DbSet<IdentificationStrategy> IdentificationStrategies => Set<IdentificationStrategy>();

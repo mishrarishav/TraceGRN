@@ -1,8 +1,8 @@
-# TraceFlow Operator User Guide
+# TrackGRN Operator User Guide
 
 ## 1. Sign in
 
-Open TraceFlow and use the assigned plant credentials. For the current demo UI:
+Open TrackGRN and use the assigned plant credentials. For the current demo UI:
 
 - Username: `admin`
 - Password: `admin123`

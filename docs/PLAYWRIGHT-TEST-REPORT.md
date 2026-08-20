@@ -1,139 +1,92 @@
-# TrackGRN Playwright Functional Test Report
+# TrackGRN Functional Validation Report
 
-**Test date:** 15 August 2026  
-**Application:** TraceFlow / TrackGRN  
-**UI:** React 19, TanStack Router, TypeScript  
-**API foundation:** ASP.NET Core 8 with SQL Server 2022 Express  
-**Automation:** Playwright Chromium and Axe WCAG checks
+**Validation date:** 17 August 2026
 
-## Outcome
+**Application:** TrackGRN Material Traceability System
 
-The UI route matrix, critical business workflows, handheld layouts, runtime health and accessibility checks are automated. Bugs found during the run were corrected in the existing TraceFlow visual pattern and then regression-tested.
+**UI:** React 19, TanStack Router, TypeScript
 
-The final clean run discovered 138 project/test combinations: **51 passed, 0 failed, and 87 were intentionally skipped by project routing**. Desktop-only functional checks run once; handheld projects run only their responsive matrix, so those skips are expected rather than untested failures.
+**API:** ASP.NET Core 8, JWT authentication and role authorization
 
-## Environments covered
+**Database:** Microsoft SQL Server with EF Core migrations
 
-| Profile | Viewport / device behavior | Purpose |
-|---|---:|---|
-| Desktop Chromium | 1440 × 1000 | Complete route and functional suite |
-| Pixel 7 | Playwright device profile | Touch/mobile overflow and navigation |
-| Zebra MC9300 profile | 480 × 800, touch enabled | Plant handheld scanner reachability |
+**Automation:** Playwright Chromium, responsive device profiles and SQL integration tests
 
-All tests use reduced motion, one worker and deterministic mock service data. Failed tests retain screenshots, video and Playwright traces in `UItrackGRN/test-results`.
+## Client report
+
+The client-shareable report is a single offline HTML file. Its screenshots, highlights,
+arrows, architecture diagram and process flow are embedded directly in the file:
+
+- [Open TrackGRN Client Report](TrackGRN-Client-Report.html)
+
+## Verified outcome
+
+TrackGRN is wired to the real ASP.NET API and Microsoft SQL database. CRUD operations,
+GRN import, label lifecycle, inward, issue, inventory, traceability, audit, revisions and
+report downloads use persistent server data rather than runtime mock services.
+
+| Verification | Result |
+|---|---|
+| API build | Pass — 0 warnings, 0 errors |
+| API SQL integration tests | Pass — 12/12 |
+| UI lint | Pass |
+| UI production build | Pass |
+| Annotated evidence capture | Pass — 2/2 scenarios |
+| Desktop route and business workflows | Pass |
+| Pixel responsive profile | Pass |
+| Zebra MC9300 480 × 800 profile | Pass |
+| SQL migration and idempotent seed | Pass |
+| API health, authentication and persisted material read | Pass |
 
 ## Automated coverage
 
-| Area | Automated assertions |
+| Area | Verified behavior |
 |---|---|
-| Route health | 17 application routes render their expected heading, produce no runtime/console error and have no body-level horizontal overflow |
-| Authentication | Invalid credentials remain on login with an error; valid demo credentials open the dashboard; pre-hydration native form submission is blocked |
-| SAP import | `.csv` rejection, `.xlsx` acceptance, 10 MB rule, preview, confirmation and commit feedback |
-| GRNs | Search and navigation to a multi-material GRN; all four expected material lines |
-| Labels | Reprint confirmation, success feedback, table search, optional columns, pagination and CSV export |
-| Inward / issue | Generated pack cannot issue; single inward; duplicate inward rejection; confirmed issue; duplicate issue rejection |
-| Traceability | Label search, complete lifecycle display, not-found state and global Ctrl+K hand-off |
-| Shell controls | Notifications, user menu navigation, sidebar collapse/expand, theme persistence and 404 recovery |
-| Reports / configuration | Report generation feedback, scanning policy state and configuration save feedback |
-| Connectivity / PWA | Offline warning on issue route, production service-worker registration and browser-controlled install prompt |
-| Responsive | Dashboard, inward, issue, inventory and traceability on Pixel/Zebra with no horizontal overflow |
-| Zebra reachability | Issue scanner input remains inside the initial 800 px viewport |
-| Accessibility | Serious/critical WCAG A/AA scan on dashboard, login, import, inward, issue, traceability and configuration |
-
-## Defects found and fixed
-
-| ID | Defect | Resolution / regression guard |
-|---|---|---|
-| TF-01 | A click before React hydration could trigger native `?` form navigation | Added a hydration-ready marker and disabled login submit until hydration; Playwright waits for the same explicit readiness signal |
-| TF-02 | Any username/password was accepted | Added exact demo credential validation and invalid-login coverage |
-| TF-03 | Import accepted `.csv`/`.xls` and ignored maximum size | Restricted input/drop validation to `.xlsx` and 10 MB |
-| TF-04 | Mock generation produced duplicate `LBL-00003452` IDs | Corrected the UID sequence; traceability now targets a unique pack |
-| TF-05 | Generated/printed labels could be issued without inward | Added purpose-aware scanner guards (`inward` and `issue`) |
-| TF-06 | The same label could be inwarded or issued repeatedly | Added duplicate inward/issue and blocked/cancelled state checks |
-| TF-07 | Scan status vanished after route reload in the mock UI | Persisted mock label status in browser storage; the API remains the production source of truth |
-| TF-08 | Confirmation dialog cleared the pending issue before its async mutation completed | The issue mutation now owns an immutable label snapshot |
-| TF-09 | Inward UI introduced rack/bin management, which is outside the master scope | Removed destination-bin controls and messages; `binSequence` remains pack sequence on labels |
-| TF-10 | UI suggested fake sample IDs | Replaced examples with records that exist in the test dataset |
-| TF-11 | Offline issue queue could be enabled | Replaced it with an explicit online-only issue rule and offline warning |
-| TF-12 | Install banner was simulated rather than connected to the browser event | Install control now appears only for a real `beforeinstallprompt`; production registers a service worker |
-| TF-13 | Global search and Ctrl+K hint were inert | Implemented keyboard focus, query navigation and automatic trace search |
-| TF-14 | Scanner card was too tall on a 480 × 800 handheld | Compacted mobile stats/scanner spacing while retaining desktop sizing |
-| TF-15 | Contrast, select names, switches and pie-chart sectors failed accessibility checks | Darkened the same brand tokens, added accessible labels, and named each SVG sector |
-| TF-16 | Recharts animation could leave screenshots with incomplete/blank charts | Disabled non-essential chart animation for deterministic output |
+| Authentication | Invalid login rejection, valid JWT login, refresh and protected routes |
+| Master CRUD | Materials, users, stations/devices and configuration persistence |
+| SAP import | `.xlsx` validation, 10 MB rule, preview, warnings and commit |
+| GRNs | Search, detail, material lines, business identity and revision restrictions |
+| Labels | Unique pack identity, QR preview, print/reprint audit, filter and export |
+| Inward | Scanner lookup, transition validation and duplicate inward rejection |
+| Issue | Required station, inward prerequisite, confirmation and duplicate rejection |
+| Inventory | Received, issued and available balances derived from SQL transactions |
+| Traceability | Search by label/GRN/material/batch and complete lifecycle history |
+| Audit and reports | Persistent audit records and API-generated report downloads |
+| Responsive UI | Desktop, Pixel mobile and Zebra 480 × 800 scanner workflow |
+| Accessibility | Serious/critical WCAG checks on primary operator screens |
 
 ## Annotated evidence
 
-### Dashboard and operational KPIs
+Orange outlines mark the exact control or information area. Red arrows connect numbered
+callouts to the relevant UI element.
 
-![Annotated dashboard](playwright-evidence/01-dashboard-annotated.png)
+1. [Operations dashboard](playwright-evidence/01-dashboard-annotated.png)
+2. [SAP GRN import](playwright-evidence/02-sap-import-annotated.png)
+3. [Material inward](playwright-evidence/03-material-inward-annotated.png)
+4. [Material issue](playwright-evidence/04-material-issue-annotated.png)
+5. [Traceability lifecycle](playwright-evidence/05-traceability-annotated.png)
+6. [Scanning safeguards](playwright-evidence/06-scanning-config-annotated.png)
+7. [Zebra handheld workflow](playwright-evidence/07-zebra-issue-480x800-annotated.png)
 
-### SAP GRN import and business identity selection
+## Hardware boundary
 
-![Annotated SAP import](playwright-evidence/02-sap-import-annotated.png)
+Keyboard-wedge scanning can be demonstrated with a keyboard or attached compatible
+scanner. Thermal output remains in simulation until a physical printer is available.
+The backend includes simulation, Zebra raw TCP and Windows spooler modes, but final
+production acceptance still requires the actual plant scanner, printer, SAP workbook
+variation and LAN environment.
 
-### Material inward scanner
+## Regenerate annotated screenshots
 
-![Annotated inward workflow](playwright-evidence/03-material-inward-annotated.png)
-
-### Material issue scanner
-
-![Annotated issue workflow](playwright-evidence/04-material-issue-annotated.png)
-
-### End-to-end traceability
-
-![Annotated traceability](playwright-evidence/05-traceability-annotated.png)
-
-### Scanning safeguards
-
-![Annotated scanning configuration](playwright-evidence/06-scanning-config-annotated.png)
-
-### Zebra-sized issue workflow
-
-![Annotated Zebra issue workflow](playwright-evidence/07-zebra-issue-480x800-annotated.png)
-
-## How to run
-
-From `D:\TrackGRN`:
+Build the API first, then run the documentation capture from `UItrackGRN`:
 
 ```powershell
-# One-time browser/dependency setup
-npm.cmd run ui:install
-cd UItrackGRN
-npm.cmd exec playwright install chromium
-cd ..
-
-# Complete UI suite: desktop + Pixel + Zebra
-npm.cmd run ui:e2e
-
-# Faster focused runs
-npm.cmd run ui:e2e:desktop
-npm.cmd run ui:e2e:mobile
-
-# Build UI and API, then run API + UI tests
-npm.cmd run build
-npm.cmd test
+$env:TRACKGRN_GENERATE_DOCUMENTATION='1'
+npm.cmd exec -- playwright test e2e/documentation.spec.ts --project=desktop-chromium
 ```
 
-Open the HTML report after a run:
+Re-embed the latest screenshots into the client HTML:
 
 ```powershell
-cd UItrackGRN
-npm.cmd run test:e2e:report
+powershell -NoProfile -ExecutionPolicy Bypass -File docs/generate-client-report.ps1
 ```
-
-## Verification record
-
-| Check | Result |
-|---|---|
-| UI production build | Pass |
-| Desktop functional/route suite | Pass after fixes |
-| Pixel 7 responsive matrix | Pass |
-| Zebra 480 × 800 responsive matrix | Pass |
-| WCAG serious/critical checks | 7/7 screens pass |
-| API unit/integration tests | 8/8 pass from the API foundation verification |
-| SQL migration + seed + API smoke | Pass from the API foundation verification |
-| Full final Playwright suite | Pass — 51 passed, 0 failed, 87 expected project skips (138 discovered) |
-
-## Boundary of this test report
-
-The current UI service layer still uses deterministic browser mock data. These tests prove UI behavior and client-side business guards; they do not claim that every UI screen is already wired to the ASP.NET API. Physical Zebra trigger hardware, thermal printer output, real SAP Excel variations, plant LAN interruption and SQL concurrency require hardware/contract/integration testing once the API endpoints replace the mock service bodies.

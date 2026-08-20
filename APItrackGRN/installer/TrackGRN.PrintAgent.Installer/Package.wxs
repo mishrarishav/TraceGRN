@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:firewall="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <Package
+    Name="TrackGRN Local Print Agent"
+    Manufacturer="TrackGRN"
+    Version="1.0.0"
+    UpgradeCode="{7B9F6138-28B5-4BD5-A76C-557F73963C57}"
+    Scope="perMachine"
+    InstallerVersion="500">
+
+    <SummaryInformation Description="Connects TrackGRN to printers installed on this Windows computer." />
+    <MajorUpgrade DowngradeErrorMessage="A newer TrackGRN Local Print Agent is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="TrackGRN Print Agent">
+        <Component Id="PrintAgentService" Guid="{8392D895-A333-4264-A79E-C96DCF76EBD6}" Bitness="always64">
+          <File Id="PrintAgentExecutable" Source="$(var.AgentPublishDir)TrackGRN.PrintAgent.exe" KeyPath="yes">
+            <firewall:FirewallException
+              Id="PrintAgentLanFirewall"
+              Name="TrackGRN Local Print Agent"
+              Description="Allows TrackGRN API servers on the local plant network to send labels."
+              Port="17891"
+              Protocol="tcp"
+              Scope="localSubnet"
+              Profile="all" />
+          </File>
+          <ServiceInstall
+            Id="InstallPrintAgentService"
+            Name="TrackGRNPrintAgent"
+            DisplayName="TrackGRN Local Print Agent"
+            Description="Makes Windows and USB label printers available to TrackGRN on the local network."
+            Type="ownProcess"
+            Start="auto"
+            ErrorControl="normal"
+            Account="LocalSystem" />
+          <ServiceControl
+            Id="ControlPrintAgentService"
+            Name="TrackGRNPrintAgent"
+            Start="install"
+            Stop="both"
+            Remove="uninstall"
+            Wait="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="TrackGRN Local Print Agent" Level="1">
+      <ComponentRef Id="PrintAgentService" />
+    </Feature>
+  </Package>
+</Wix>

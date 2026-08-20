@@ -14,6 +14,8 @@
     "api:build": "dotnet build APItrackGRN/APItrackGRN.sln",
     "api:smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File APItrackGRN/scripts/smoke-test.ps1",
     "api:test": "dotnet test APItrackGRN/APItrackGRN.sln --no-restore",
+    "printer:test": "dotnet run --project APItrackGRN/src/APItrackGRN.Api/APItrackGRN.Api.csproj -- --printer-test",
+    "print-agent:installer": "dotnet build APItrackGRN/installer/TrackGRN.PrintAgent.Installer/TrackGRN.PrintAgent.Installer.wixproj -c Release",
     "migrate": "dotnet run --project APItrackGRN/src/APItrackGRN.Api/APItrackGRN.Api.csproj -- --migrate",
     "seed": "dotnet run --project APItrackGRN/src/APItrackGRN.Api/APItrackGRN.Api.csproj -- --seed",
     "db:setup": "dotnet run --project APItrackGRN/src/APItrackGRN.Api/APItrackGRN.Api.csproj -- --migrate --seed",

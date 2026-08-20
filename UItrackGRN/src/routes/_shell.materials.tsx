@@ -34,12 +34,12 @@ import type { Material } from "@/types";
 export const Route = createFileRoute("/_shell/materials")({
   head: () => ({
     meta: [
-      { title: "Materials — TraceFlow" },
+      { title: "Materials — TrackGRN" },
       {
         name: "description",
         content: "Material master with received, issued and available quantity across all GRNs.",
       },
-      { property: "og:title", content: "Materials — TraceFlow" },
+      { property: "og:title", content: "Materials — TrackGRN" },
       { property: "og:description", content: "Material master and live stock position." },
     ],
   }),
@@ -58,6 +58,9 @@ function MaterialsPage() {
     description: "",
     uom: "PCS",
     packingStandard: 1,
+    partNumber: "",
+    defaultBinLocation: "",
+    openingQuantity: null,
     isActive: true,
   });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["materials"] });
@@ -91,6 +94,9 @@ function MaterialsPage() {
       description: material.description,
       uom: material.uom,
       packingStandard: material.packingStandard,
+      partNumber: material.partNumber ?? "",
+      defaultBinLocation: material.defaultBinLocation ?? "",
+      openingQuantity: material.openingQuantity ?? null,
       isActive: material.status !== "Inactive",
     });
     setEditorOpen(true);
@@ -111,6 +117,16 @@ function MaterialsPage() {
       header: "Description",
       render: (m) => m.description,
       className: "max-w-[280px] truncate",
+    },
+    {
+      key: "part",
+      header: "Part No",
+      render: (m) => <span className="num">{m.partNumber || "—"}</span>,
+    },
+    {
+      key: "bin",
+      header: "Default Bin",
+      render: (m) => <span className="num">{m.defaultBinLocation || "—"}</span>,
     },
     { key: "uom", header: "UoM", render: (m) => <span className="num">{m.uom}</span> },
     {
@@ -169,6 +185,9 @@ function MaterialsPage() {
                   description: "",
                   uom: "PCS",
                   packingStandard: 1,
+                  partNumber: "",
+                  defaultBinLocation: "",
+                  openingQuantity: null,
                   isActive: true,
                 });
                 setEditorOpen(true);
@@ -203,7 +222,7 @@ function MaterialsPage() {
           {
             key: "uom",
             label: "UoM",
-            options: ["All", "PCS", "KG", "M", "L", "SET"],
+            options: ["All", "PC", "PCS", "KG", "M", "L", "SET"],
             value: uom,
             onChange: setUom,
           },
@@ -289,6 +308,37 @@ function MaterialsPage() {
                 />
               </Field>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Part number">
+                <Input
+                  aria-label="Part number"
+                  value={form.partNumber ?? ""}
+                  onChange={(event) => setForm({ ...form, partNumber: event.target.value })}
+                />
+              </Field>
+              <Field label="Default bin">
+                <Input
+                  aria-label="Default bin"
+                  value={form.defaultBinLocation ?? ""}
+                  onChange={(event) => setForm({ ...form, defaultBinLocation: event.target.value })}
+                />
+              </Field>
+            </div>
+            <Field label="Opening/reference quantity">
+              <Input
+                aria-label="Opening/reference quantity"
+                min={0}
+                step="any"
+                type="number"
+                value={form.openingQuantity ?? ""}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    openingQuantity: event.target.value === "" ? null : Number(event.target.value),
+                  })
+                }
+              />
+            </Field>
             <label className="flex items-center gap-3 text-sm">
               <Switch
                 checked={form.isActive}
@@ -331,6 +381,12 @@ function MaterialsPage() {
                 </div>
                 <div className="panel space-y-2 p-4 text-sm">
                   <Row k="Unit of Measure" v={selected.uom} />
+                  <Row k="Part Number" v={selected.partNumber || "—"} />
+                  <Row k="Default Bin" v={selected.defaultBinLocation || "—"} />
+                  <Row
+                    k="Opening/Reference Qty"
+                    v={selected.openingQuantity?.toLocaleString() ?? "—"}
+                  />
                   <Row k="Latest GRN" v={selected.latestGrn} />
                   <Row
                     k="Estimated Labels"

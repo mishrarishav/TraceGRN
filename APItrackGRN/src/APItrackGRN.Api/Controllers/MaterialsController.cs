@@ -25,14 +25,17 @@ public sealed class MaterialsController(TrackGrnDbContext dbContext, IAuditWrite
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.Trim();
-            query = query.Where(x => x.MaterialNumber.Contains(term) || x.Description.Contains(term));
+            query = query.Where(x => x.MaterialNumber.Contains(term) || x.Description.Contains(term)
+                || (x.PartNumber != null && x.PartNumber.Contains(term))
+                || (x.DefaultBinLocation != null && x.DefaultBinLocation.Contains(term)));
         }
 
         var total = await query.CountAsync(cancellationToken);
         var raw = await query.OrderBy(x => x.MaterialNumber).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(x => new
             {
-                x.Id, x.MaterialNumber, x.Description, x.Uom,
+                x.Id, x.MaterialNumber, x.Description, x.Uom, x.PartNumber,
+                x.DefaultBinLocation, x.OpeningQuantity,
                 packingStandard = x.DefaultPackingStandard ?? x.GrnLines.Where(l => l.IsActive)
                     .OrderByDescending(l => l.CreatedAt).Select(l => (decimal?)l.PackingStandard).FirstOrDefault() ?? 0,
                 totalReceived = x.GrnLines.Where(l => l.IsActive).Sum(l => (decimal?)l.ReceivedQuantity) ?? 0,
@@ -46,7 +49,8 @@ public sealed class MaterialsController(TrackGrnDbContext dbContext, IAuditWrite
 
         var items = raw.Select(x => new
         {
-            x.Id, x.MaterialNumber, x.Description, x.Uom, x.packingStandard, x.totalReceived,
+            x.Id, x.MaterialNumber, x.Description, x.Uom, x.PartNumber,
+            x.DefaultBinLocation, x.OpeningQuantity, x.packingStandard, x.totalReceived,
             x.totalIssued, available = x.totalReceived - x.totalIssued, x.latestGrn,
             status = x.IsActive ? "Available" : "Inactive"
         });
@@ -66,6 +70,8 @@ public sealed class MaterialsController(TrackGrnDbContext dbContext, IAuditWrite
         {
             MaterialNumber = number, Description = request.Description.Trim(),
             Uom = request.Uom.Trim().ToUpperInvariant(), DefaultPackingStandard = request.PackingStandard,
+            PartNumber = Clean(request.PartNumber), DefaultBinLocation = Clean(request.DefaultBinLocation),
+            OpeningQuantity = request.OpeningQuantity,
             IsActive = request.IsActive
         };
         dbContext.Materials.Add(entity);
@@ -85,11 +91,15 @@ public sealed class MaterialsController(TrackGrnDbContext dbContext, IAuditWrite
         var number = request.MaterialNumber.Trim().ToUpperInvariant();
         if (await dbContext.Materials.AnyAsync(x => x.Id != id && x.MaterialNumber == number, cancellationToken))
             return Conflict(Problem("Material already exists", $"Material {number} is already configured."));
-        var old = new { entity.MaterialNumber, entity.Description, entity.Uom, entity.DefaultPackingStandard, entity.IsActive };
+        var old = new { entity.MaterialNumber, entity.Description, entity.Uom, entity.DefaultPackingStandard,
+            entity.PartNumber, entity.DefaultBinLocation, entity.OpeningQuantity, entity.IsActive };
         entity.MaterialNumber = number;
         entity.Description = request.Description.Trim();
         entity.Uom = request.Uom.Trim().ToUpperInvariant();
         entity.DefaultPackingStandard = request.PackingStandard;
+        entity.PartNumber = Clean(request.PartNumber);
+        entity.DefaultBinLocation = Clean(request.DefaultBinLocation);
+        entity.OpeningQuantity = request.OpeningQuantity;
         entity.IsActive = request.IsActive;
         audit.Add("MaterialUpdated", "Material", id.ToString(), old, request);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -115,11 +125,15 @@ public sealed class MaterialsController(TrackGrnDbContext dbContext, IAuditWrite
         if (string.IsNullOrWhiteSpace(request.Description)) errors["description"] = ["Description is required."];
         if (string.IsNullOrWhiteSpace(request.Uom)) errors["uom"] = ["UOM is required."];
         if (request.PackingStandard <= 0) errors["packingStandard"] = ["Packing standard must be greater than zero."];
+        if (request.OpeningQuantity < 0) errors["openingQuantity"] = ["Opening/reference quantity cannot be negative."];
         return errors.Count == 0 ? null : errors;
     }
+
+    private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static ProblemDetails Problem(string title, string detail) => new() { Title = title, Detail = detail, Status = 409 };
 }
 
 public sealed record MaterialRequest(string MaterialNumber, string Description, string Uom,
-    decimal PackingStandard, bool IsActive = true);
+    decimal PackingStandard, bool IsActive = true, string? PartNumber = null,
+    string? DefaultBinLocation = null, decimal? OpeningQuantity = null);

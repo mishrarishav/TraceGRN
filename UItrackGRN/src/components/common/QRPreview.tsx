@@ -59,7 +59,7 @@ export function QRPreview({
   className?: string;
 }) {
   const c = {
-    companyName: "TraceFlow",
+    companyName: "TrackGRN",
     showBatch: true,
     showGrnDate: true,
     showDescription: true,

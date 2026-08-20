@@ -21,13 +21,13 @@ import type { AuditEvent } from "@/types";
 export const Route = createFileRoute("/_shell/audit")({
   head: () => ({
     meta: [
-      { title: "Audit Log — TraceFlow" },
+      { title: "Audit Log — TrackGRN" },
       {
         name: "description",
         content:
           "Immutable record of every import, label, inward and issue action with old and new values.",
       },
-      { property: "og:title", content: "Audit Log — TraceFlow" },
+      { property: "og:title", content: "Audit Log — TrackGRN" },
       { property: "og:description", content: "Immutable traceability audit trail." },
     ],
   }),

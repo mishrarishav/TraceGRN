@@ -21,6 +21,7 @@ public sealed class DatabaseSeeder(
         var admin = await SeedAdminAsync(roles["Admin"], cancellationToken);
         var strategy = await SeedStrategyAsync(admin.Id, cancellationToken);
         var stations = await SeedStationsAsync(cancellationToken);
+        await SeedVendorsAsync(cancellationToken);
         var materials = await SeedMaterialsAsync(cancellationToken);
         await SeedConfigurationAsync(admin.Id, cancellationToken);
         await SeedDemoTraceabilityAsync(admin, strategy, stations["STORE-EXIT-01"], materials, cancellationToken);
@@ -147,13 +148,43 @@ public sealed class DatabaseSeeder(
 
     private async Task<Dictionary<string, Material>> SeedMaterialsAsync(CancellationToken cancellationToken)
     {
-        var definitions = new[]
+        var definitions = new MaterialSeed[]
         {
-            new { Number = "M01", Description = "Automotive Assembly Component", Packing = 1000m },
-            new { Number = "M0220", Description = "Precision Mounting Bracket", Packing = 500m },
-            new { Number = "M022", Description = "Drive Housing Component", Packing = 500m },
-            new { Number = "M021", Description = "Industrial Fastener Set", Packing = 250m },
-            new { Number = "M100", Description = "Revision Demonstration Material", Packing = 1000m }
+            new("M01", "Automotive Assembly Component", 1000m),
+            new("M0220", "Precision Mounting Bracket", 500m),
+            new("M022", "Drive Housing Component", 500m),
+            new("M021", "Industrial Fastener Set", 250m),
+            new("M100", "Revision Demonstration Material", 1000m),
+
+            new("MT0A1P064", "RESERVE TUBE (FINISHED)", 30m),
+            new("M06901275", "UPPER SPRING PAD-TOP MOUNT", 200m),
+            new("M06901284", "BUMPER CAP", 240m),
+            new("M06030952", "COMPRESSION BUMPER", 200m),
+            new("M06431911", "DIRT SHIELD", 32m),
+            new("M0171Y542", "BUMPER CAP", 300m),
+            new("M02030078", "BASE CUP", 100m),
+            new("M02071727", "HOSE BRACKET - RH", 100m),
+            new("M02071728", "HOSE BRACKET - LH", 100m),
+            new("M02200786", "FOOT BRACKET", 26m),
+            new("M02100490", "UPPER WASHER", 500m, "1905", "86", 5160m),
+
+            new("M02190422", null, 250m),
+            new("M06081352", null, 80m, "519", "210", 30240m),
+            new("M05N3N001", null, 196m, "1300", "170", 9350m),
+            new("M06200175", null, 500m, "624", "16", 6160m),
+            new("M06901276", null, 100m, "840", "12", 2640m),
+            new("M06901277", null, 100m, "156", "18", 21600m),
+
+            new("M06030602", null, 570m),
+            new("M06030840", null, 220m),
+            new("M06030646", null, 350m),
+            new("M06030489", null, 380m),
+            new("M06030884", null, 230m),
+            new("M06031300", null, 55m),
+            new("M02190519", null, 144m),
+            new("M02071223", null, 600m),
+            new("M02071222", null, 600m),
+            new("M02100430", null, 500m)
         };
 
         var existing = await dbContext.Materials.ToDictionaryAsync(x => x.MaterialNumber, cancellationToken);
@@ -164,17 +195,99 @@ public sealed class DatabaseSeeder(
                 var material = new Material
                 {
                     MaterialNumber = definition.Number,
-                    Description = definition.Description,
-                    Uom = "PCS",
-                    DefaultPackingStandard = definition.Packing
+                    Description = definition.Description ?? $"Material {definition.Number}",
+                    Uom = "PC",
+                    DefaultPackingStandard = definition.Packing,
+                    PartNumber = definition.PartNumber,
+                    DefaultBinLocation = definition.BinLocation,
+                    OpeningQuantity = definition.OpeningQuantity
                 };
                 dbContext.Materials.Add(material);
                 existing[definition.Number] = material;
+            }
+            else
+            {
+                var material = existing[definition.Number];
+                if (!string.IsNullOrWhiteSpace(definition.Description)) material.Description = definition.Description;
+                material.DefaultPackingStandard = definition.Packing;
+                material.PartNumber = definition.PartNumber ?? material.PartNumber;
+                material.DefaultBinLocation = definition.BinLocation ?? material.DefaultBinLocation;
+                material.OpeningQuantity = definition.OpeningQuantity ?? material.OpeningQuantity;
             }
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
         return existing;
+    }
+
+    private async Task SeedVendorsAsync(CancellationToken cancellationToken)
+    {
+        var definitions = new VendorSeed[]
+        {
+            new("1098779", "ATOMONE TECHNOLOGIES"),
+            new("1074658", "BASF INDIA LIMITED"),
+            new("1087643", "BASF INDIA LTD"),
+            new("1083253", "Bridgestone India Automotive"),
+            new("1094477", "FREUDENBERG-NOK PRIVATE LIMITED"),
+            new("1069332", "Fuchs Lubricants"),
+            new("1063568", "Global Automotive Components Pvt. L"),
+            new("1051226", "GOLDY PRECISION STAMPINGS PVT. LTD."),
+            new("1082521", "GOOD LUCK INDUSTRIES"),
+            new("1079983", "Good Luck Industries"),
+            new("1094846", "GOWELL RUBBER INDUSTRIES"),
+            new("1068161", "GOWELL RUBBER INDUSTRIES"),
+            new("1079962", "HINDUSTAN PETROLEUM"),
+            new("1096228", "HINDUSTAN PETROLEUM CORPORATION LTD"),
+            new("1093513", "Inox Air Products Pvt. Ltd."),
+            new("1064742", "Prakash Techno Plast India Pvt"),
+            new("1094766", "JAIRAJ ANCILLARIES PVT LTD", ["Jairaj Ancillares Pvt. Ltd.", "GOWELL RUBBER INDUSTRIES"]),
+            new("1091705", "JAIRAJ ANCILLARIES PVT LTD"),
+            new("1094021", "KAMAL CED COATERS", ["Kamal CED"]),
+            new("1053449", "KAMAL RUBPLAST INDUSTRIES PVT"),
+            new("1094852", "Kumar Automates"),
+            new("1095022", "NVK AUTOTECH INDIA"),
+            new("1064906", "KUMAR AUTOMATES"),
+            new("1099367", "MUBEA AUTOMOTIVE COMPONENT"),
+            new("1051279", "Mubea Automotive Components India")
+        };
+
+        var existing = await dbContext.Vendors.Include(x => x.Aliases).ToDictionaryAsync(x => x.VendorCode, cancellationToken);
+        foreach (var definition in definitions)
+        {
+            if (!existing.TryGetValue(definition.Code, out var vendor))
+            {
+                vendor = new Vendor { VendorCode = definition.Code, VendorName = definition.Name, IsActive = true };
+                dbContext.Vendors.Add(vendor);
+                existing[definition.Code] = vendor;
+            }
+            else
+            {
+                vendor.VendorName = definition.Name;
+                vendor.IsActive = true;
+            }
+
+            foreach (var alias in definition.Aliases ?? [])
+            {
+                if (vendor.Aliases.Any(item => string.Equals(item.AliasName, alias, StringComparison.OrdinalIgnoreCase))) continue;
+                vendor.Aliases.Add(new VendorAlias { Vendor = vendor, AliasName = alias });
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var unlinkedHeaders = await dbContext.GrnHeaders
+            .Where(header => header.VendorId == null && header.VendorCode != null)
+            .ToListAsync(cancellationToken);
+        foreach (var header in unlinkedHeaders)
+        {
+            if (header.VendorCode is not null && existing.TryGetValue(header.VendorCode, out var vendor))
+            {
+                header.Vendor = vendor;
+                header.VendorName = vendor.VendorName;
+            }
+        }
+
+        if (unlinkedHeaders.Count > 0) await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private async Task SeedConfigurationAsync(Guid adminId, CancellationToken cancellationToken)
@@ -195,39 +308,62 @@ public sealed class DatabaseSeeder(
             "Critical inward, issue, reprint and GRN revision rules", adminId, cancellationToken);
         await AddSettingIfMissing("LabelConfiguration", "Labels", new
         {
-            UidPrefix = "LBL", LabelSize = "100x75", CompanyName = "TraceFlow Industries",
+            UidPrefix = "LBL", LabelSize = "100x75", CompanyName = "TrackGRN Industries",
             QrSize = 160, ShowBatch = true, ShowGrnDate = true, ShowDescription = true, ShowBinSequence = true
         }, "Default printable label configuration", adminId, cancellationToken);
         await AddSettingIfMissing("PlantConfiguration", "Plant", new
         {
-            DefaultPlant = "1000", DefaultStorageLocation = "RM01", TimeZone = "Asia/Kolkata"
+            DefaultPlant = "1000", DefaultStorageLocation = "RM01", TimeZone = "Asia/Kolkata",
+            ClientName = "", ClientLogoDataUrl = ""
         }, "Default plant and time zone", adminId, cancellationToken);
         await AddSettingIfMissing("ImportConfiguration", "Import", new
         {
             MaxFileSizeMb = 10, BlockDuplicateFileHashes = true, AutoGenerateLabels = true
         }, "Excel import limits and label automation", adminId, cancellationToken);
 
-        if (!await dbContext.ExcelMappingTemplates.AnyAsync(cancellationToken))
+        var businessMapping = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["GRN No"] = "GRNNumber",
+            ["Gr No"] = "GRNNumber",
+            ["GRN Date"] = "GRNDate",
+            ["Gr date"] = "GRNDate",
+            ["Line Item"] = "SAPLineItemNumber",
+            ["Material"] = "MaterialNumber",
+            ["Material Desc"] = "MaterialDescription",
+            ["Material Description"] = "MaterialDescription",
+            ["Qty"] = "ReceivedQuantity",
+            ["Quantity"] = "ReceivedQuantity",
+            ["Packing Qty"] = "PackingStandard",
+            ["Pack Qty"] = "PackingStandard",
+            ["Batch"] = "BatchNumber",
+            ["UOM"] = "UOM",
+            ["Plant"] = "Plant",
+            ["PO Number"] = "PurchaseOrder",
+            ["Vendor"] = "VendorCode",
+            ["SAP Vendor code"] = "VendorCode",
+            ["Sup Name"] = "VendorName",
+            ["Invo No"] = "InvoiceNumber",
+            ["Inv Date"] = "InvoiceDate",
+            ["Bin loc"] = "BinLocation",
+            ["Mfg date"] = "ManufacturingDate",
+            ["Exp Date"] = "ExpiryDate",
+            ["No of Labels to print"] = "ExpectedLabelCount"
+        });
+        var defaultTemplate = await dbContext.ExcelMappingTemplates
+            .SingleOrDefaultAsync(x => x.Name == "Default SAP GRN Format", cancellationToken);
+        if (defaultTemplate is null)
         {
             dbContext.ExcelMappingTemplates.Add(new ExcelMappingTemplate
             {
                 Name = "Default SAP GRN Format",
                 IsDefault = true,
                 CreatedById = adminId,
-                MappingJson = JsonSerializer.Serialize(new Dictionary<string, string>
-                {
-                    ["GRN No"] = "GRNNumber",
-                    ["GRN Date"] = "GRNDate",
-                    ["Line Item"] = "SAPLineItemNumber",
-                    ["Material"] = "MaterialNumber",
-                    ["Material Desc"] = "MaterialDescription",
-                    ["Qty"] = "ReceivedQuantity",
-                    ["Packing Qty"] = "PackingStandard",
-                    ["Batch"] = "BatchNumber",
-                    ["Plant"] = "Plant",
-                    ["PO Number"] = "PurchaseOrder"
-                })
+                MappingJson = businessMapping
             });
+        }
+        else
+        {
+            defaultTemplate.MappingJson = businessMapping;
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -440,4 +576,14 @@ public sealed class DatabaseSeeder(
 
         await dbContext.SaveChangesAsync(cancellationToken);
     }
+
+    private sealed record MaterialSeed(
+        string Number,
+        string? Description,
+        decimal Packing,
+        string? PartNumber = null,
+        string? BinLocation = null,
+        decimal? OpeningQuantity = null);
+
+    private sealed record VendorSeed(string Code, string Name, string[]? Aliases = null);
 }

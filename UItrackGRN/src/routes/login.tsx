@@ -1,32 +1,26 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { motion } from "framer-motion";
-import {
-  Factory,
-  KeyRound,
-  Loader2,
-  LogIn,
-  ScanBarcode,
-  ShieldCheck,
-  UserRound,
-} from "lucide-react";
+import { KeyRound, Loader2, LogIn, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
+import { AppLogo } from "@/components/layout/AppLogo";
+import { useBranding } from "@/hooks/use-branding";
 import { ApiError, isAuthenticated, login } from "@/services/api";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Sign in — TraceFlow Material Traceability" },
+      { title: "Sign in — TrackGRN Material Traceability" },
       {
         name: "description",
-        content: "Sign in to TraceFlow to manage GRN import, labelling and material issue.",
+        content: "Sign in to TrackGRN to manage GRN import, labelling and material issue.",
       },
-      { property: "og:title", content: "Sign in — TraceFlow" },
+      { property: "og:title", content: "Sign in — TrackGRN" },
       {
         property: "og:description",
         content: "Material traceability for manufacturing operations.",
@@ -38,10 +32,11 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("TrackGRN-Dev-Admin-2026!");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const { branding } = useBranding();
 
   useEffect(() => {
     setHydrated(true);
@@ -67,7 +62,7 @@ function LoginPage() {
   };
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
+    <div className="grid h-dvh overflow-hidden lg:grid-cols-2">
       <div className="relative hidden overflow-hidden bg-sidebar lg:block">
         <div className="brand-gradient absolute inset-0 opacity-90" />
         <div
@@ -79,14 +74,11 @@ function LoginPage() {
           }}
         />
         <div className="relative flex h-full flex-col justify-between p-12 text-primary-foreground">
-          <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15 backdrop-blur">
-              <ScanBarcode className="h-6 w-6" />
-            </span>
-            <div>
-              <p className="text-lg font-semibold">TraceFlow</p>
-              <p className="text-xs opacity-80">Material Traceability System</p>
-            </div>
+          <div className="w-full max-w-sm rounded-2xl bg-white/95 p-4 shadow-[var(--shadow-float)]">
+            <AppLogo priority className="w-full bg-transparent" />
+            <p className="mt-1 text-center text-xs font-medium text-slate-600">
+              Material Traceability System · v{branding.version}
+            </p>
           </div>
           <div className="max-w-md">
             <h2 className="text-3xl leading-tight font-semibold">
@@ -109,13 +101,11 @@ function LoginPage() {
               ))}
             </div>
           </div>
-          <p className="flex items-center gap-2 text-xs opacity-75">
-            <Factory className="h-4 w-4" /> Plant 1000 · Store Operations
-          </p>
+          <span aria-hidden="true" />
         </div>
       </div>
 
-      <div className="relative flex items-center justify-center bg-background p-6">
+      <div className="relative flex min-h-0 items-center justify-center overflow-hidden bg-background p-6 pb-16">
         <div className="absolute top-4 right-4">
           <ThemeToggle />
         </div>
@@ -125,15 +115,30 @@ function LoginPage() {
           transition={{ duration: 0.35 }}
           className="w-full max-w-sm"
         >
-          <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <span className="brand-gradient flex h-10 w-10 items-center justify-center rounded-xl text-primary-foreground">
-              <ScanBarcode className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="font-semibold">TraceFlow</p>
-              <p className="text-xs text-muted-foreground">Material Traceability System</p>
-            </div>
+          <div className="mb-8 lg:hidden">
+            <AppLogo priority className="w-56 shadow-sm" />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Material Traceability System · v{branding.version}
+            </p>
           </div>
+
+          {branding.clientLogoDataUrl || branding.clientName ? (
+            <div
+              data-testid="login-client-branding"
+              className="mb-6 flex min-h-20 items-center justify-center gap-3 rounded-xl border border-border bg-surface/70 p-3"
+            >
+              {branding.clientLogoDataUrl ? (
+                <img
+                  src={branding.clientLogoDataUrl}
+                  alt={branding.clientName ? `${branding.clientName} logo` : "Client logo"}
+                  className="max-h-14 max-w-36 object-contain"
+                />
+              ) : null}
+              {branding.clientName ? (
+                <p className="max-w-44 text-center text-sm font-semibold">{branding.clientName}</p>
+              ) : null}
+            </div>
+          ) : null}
 
           <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -187,19 +192,19 @@ function LoginPage() {
               Login
             </Button>
           </form>
-
-          <div className="mt-6 rounded-xl border border-border bg-surface p-4">
-            <p className="flex items-center gap-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-              <ShieldCheck className="h-3.5 w-3.5" /> Demo credentials
-            </p>
-            <div className="num mt-2 grid grid-cols-2 gap-2 text-sm">
-              <span className="text-muted-foreground">Username</span>
-              <span className="font-medium">admin</span>
-              <span className="text-muted-foreground">Password</span>
-              <span className="font-medium">TrackGRN-Dev-Admin-2026!</span>
-            </div>
-          </div>
         </motion.div>
+        <div
+          data-testid="login-footer"
+          className="absolute inset-x-0 bottom-0 flex h-10 items-center justify-between gap-3 border-t border-border bg-background/95 px-4 text-[10px] text-muted-foreground backdrop-blur"
+        >
+          <span>
+            <strong className="text-foreground">TrackGRN</strong>{" "}
+            <span className="num">v{branding.version}</span>
+          </span>
+          <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-1 tracking-wide">
+            Powered by <strong className="text-foreground">MAHAD GLOBUS INDIA</strong>
+          </span>
+        </div>
       </div>
     </div>
   );

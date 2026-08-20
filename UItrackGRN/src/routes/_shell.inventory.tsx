@@ -15,13 +15,13 @@ import type { InventoryRow } from "@/types";
 export const Route = createFileRoute("/_shell/inventory")({
   head: () => ({
     meta: [
-      { title: "Inventory — TraceFlow" },
+      { title: "Inventory — TrackGRN" },
       {
         name: "description",
         content:
           "Material-wise stock balance showing received, labelled, inwarded, issued and blocked quantities.",
       },
-      { property: "og:title", content: "Inventory — TraceFlow" },
+      { property: "og:title", content: "Inventory — TrackGRN" },
       { property: "og:description", content: "Live stock balance across GRNs and materials." },
     ],
   }),

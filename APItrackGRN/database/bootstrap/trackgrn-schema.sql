@@ -831,3 +831,179 @@ GO
 COMMIT;
 GO
 
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [Materials] ADD [DefaultBinLocation] nvarchar(100) NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [Materials] ADD [OpeningQuantity] decimal(18,4) NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [Materials] ADD [PartNumber] nvarchar(100) NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [GRNLines] ADD [BinLocation] nvarchar(100) NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [GRNLines] ADD [ExpectedLabelCount] int NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [GRNLines] ADD [ExpiryDate] date NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [GRNLines] ADD [ManufacturingDate] date NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [GRNHeaders] ADD [InvoiceDate] date NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [GRNHeaders] ADD [InvoiceNumber] nvarchar(100) NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [GRNHeaders] ADD [VendorId] uniqueidentifier NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    CREATE TABLE [Vendors] (
+        [Id] uniqueidentifier NOT NULL,
+        [VendorCode] nvarchar(100) NOT NULL,
+        [VendorName] nvarchar(250) NOT NULL,
+        [IsActive] bit NOT NULL,
+        [CreatedAt] datetimeoffset NOT NULL,
+        [UpdatedAt] datetimeoffset NULL,
+        CONSTRAINT [PK_Vendors] PRIMARY KEY ([Id])
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    CREATE TABLE [VendorAliases] (
+        [Id] uniqueidentifier NOT NULL,
+        [VendorId] uniqueidentifier NOT NULL,
+        [AliasName] nvarchar(250) NOT NULL,
+        [CreatedAt] datetimeoffset NOT NULL,
+        [UpdatedAt] datetimeoffset NULL,
+        CONSTRAINT [PK_VendorAliases] PRIMARY KEY ([Id]),
+        CONSTRAINT [FK_VendorAliases_Vendors_VendorId] FOREIGN KEY ([VendorId]) REFERENCES [Vendors] ([Id]) ON DELETE CASCADE
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    CREATE INDEX [IX_GRNHeaders_VendorId] ON [GRNHeaders] ([VendorId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    CREATE UNIQUE INDEX [IX_VendorAliases_VendorId_AliasName] ON [VendorAliases] ([VendorId], [AliasName]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    CREATE UNIQUE INDEX [IX_Vendors_VendorCode] ON [Vendors] ([VendorCode]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    ALTER TABLE [GRNHeaders] ADD CONSTRAINT [FK_GRNHeaders_Vendors_VendorId] FOREIGN KEY ([VendorId]) REFERENCES [Vendors] ([Id]) ON DELETE SET NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260820121735_AddBusinessMasterAndImportFields'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260820121735_AddBusinessMasterAndImportFields', N'8.0.30');
+END;
+GO
+
+COMMIT;
+GO
+

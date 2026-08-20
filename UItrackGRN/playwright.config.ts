@@ -1,12 +1,21 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const apiOrigin = process.env["TRACKGRN_API_ORIGIN"] ?? "http://127.0.0.1:5025";
+const uiPort = process.env["TRACKGRN_UI_PORT"] ?? "4173";
+const uiOrigin = `http://127.0.0.1:${uiPort}`;
+const apiExecutable =
+  process.env["TRACKGRN_API_EXECUTABLE"] ?? "bin\\Debug\\net8.0\\APItrackGRN.Api.exe";
+
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: "**/documentation.spec.ts",
+  testIgnore: [
+    ...(process.env["TRACKGRN_GENERATE_DOCUMENTATION"] === "1" ? [] : ["**/documentation.spec.ts"]),
+    "**/ui-business-offline.spec.ts",
+  ],
   outputDir: "test-results",
   fullyParallel: false,
   workers: 1,
-  timeout: 30_000,
+  timeout: process.env["TRACKGRN_VISIBLE_DEMO"] === "1" ? 90_000 : 30_000,
   expect: { timeout: 7_500 },
   forbidOnly: Boolean(process.env["CI"]),
   retries: process.env["CI"] ? 2 : 0,
@@ -16,7 +25,8 @@ export default defineConfig({
     ["json", { outputFile: "test-results/results.json" }],
   ],
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: uiOrigin,
+    launchOptions: process.env["TRACKGRN_VISIBLE_DEMO"] === "1" ? { slowMo: 650 } : undefined,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
@@ -24,16 +34,17 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "bin\\Debug\\net8.0\\APItrackGRN.Api.exe --urls http://127.0.0.1:5025",
+      command: `${apiExecutable} --urls ${apiOrigin}`,
       cwd: "../APItrackGRN/src/APItrackGRN.Api",
-      url: "http://127.0.0.1:5025/health/live",
+      url: `${apiOrigin}/health/live`,
       env: { ASPNETCORE_ENVIRONMENT: "Testing" },
       reuseExistingServer: !process.env["CI"],
       timeout: 120_000,
     },
     {
-      command: "npm run dev -- --host 127.0.0.1 --port 4173",
-      url: "http://127.0.0.1:4173/login",
+      command: `npm run dev -- --host 127.0.0.1 --port ${uiPort}`,
+      url: `${uiOrigin}/login`,
+      env: { TRACKGRN_API_PROXY: apiOrigin },
       reuseExistingServer: !process.env["CI"],
       timeout: 120_000,
     },
