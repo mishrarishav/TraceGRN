@@ -9,6 +9,7 @@ using APItrackGRN.Domain.Enums;
 using APItrackGRN.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.EntityFrameworkCore;
 
 namespace APItrackGRN.Api.Controllers;
@@ -62,7 +63,7 @@ public sealed class ImportsController(
         if (batch is null) return NotFound();
         var rows = await dbContext.ImportRowResults.AsNoTracking().Where(x => x.ImportBatchId == id)
             .OrderBy(x => x.ExcelRowNumber).ToListAsync(cancellationToken);
-        return Ok(new { batch = BatchDto(batch, "Configured template"), rows = rows.Select(RowDto) });
+        return Ok(new { batch = BatchDto(batch, "Configured template"), rows = rows.Select(row => RowDto(row)) });
     }
 
     [HttpPost("inspect")]
@@ -176,14 +177,6 @@ public sealed class ImportsController(
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         var duplicate = await dbContext.ImportBatches.AsNoTracking().Where(x => x.FileHash == hash && x.ImportStatus != ImportStatus.Failed)
             .OrderByDescending(x => x.UploadedAt).Select(x => new { x.Id, x.FileName, x.UploadedAt }).FirstOrDefaultAsync(cancellationToken);
-        if (duplicate is not null && !overrideDuplicate)
-        {
-            var problem = new ProblemDetails { Title = "Duplicate import file", Detail = $"This file was already uploaded as {duplicate.FileName} at {duplicate.UploadedAt:O}.", Status = 409 };
-            problem.Extensions["code"] = "DUPLICATE_FILE";
-            problem.Extensions["existingBatchId"] = duplicate.Id;
-            return Conflict(problem);
-        }
-
         var strategy = await dbContext.IdentificationStrategies.SingleAsync(x => x.IsActive, cancellationToken);
         var selectedFields = JsonSerializer.Deserialize<List<string>>(strategy.SelectedFieldsJson, JsonOptions) ?? [];
         var template = mappingTemplateId is null
@@ -249,7 +242,7 @@ public sealed class ImportsController(
         {
             FileName = Path.GetFileName(file.FileName), FileHash = hash, UploadedById = requestContext.UserId,
             TotalRows = candidates.Count, ImportStatus = ImportStatus.Pending,
-            IdentificationStrategyId = strategy.Id, IsDuplicateOverride = overrideDuplicate
+            IdentificationStrategyId = strategy.Id, IsDuplicateOverride = duplicate is not null || overrideDuplicate
         };
         dbContext.ImportBatches.Add(batch);
         foreach (var candidate in candidates)
@@ -271,17 +264,29 @@ public sealed class ImportsController(
         audit.Add("ExcelPreviewed", "ImportBatch", batch.Id.ToString(), newValues: new { batch.FileName, batch.TotalRows, batch.NewRows, batch.UpdatedRows, batch.UnchangedRows, batch.WarningRows, batch.RejectedRows, TemplateName = template.Name, SheetName = sheetName, HeaderRowNumber = headerRowNumber, StrategyName = strategy.Name });
         await dbContext.SaveChangesAsync(cancellationToken);
         var rowResults = await dbContext.ImportRowResults.AsNoTracking().Where(x => x.ImportBatchId == batch.Id).OrderBy(x => x.ExcelRowNumber).ToListAsync(cancellationToken);
-        return Ok(new { batch = BatchDto(batch, template.Name), rows = rowResults.Select(RowDto) });
+        return Ok(new
+        {
+            batch = BatchDto(batch, template.Name),
+            rows = rowResults.Select(result =>
+            {
+                existing.TryGetValue(result.BusinessKeyHash ?? string.Empty, out var current);
+                return RowDto(result, current);
+            })
+        });
     }
 
     [HttpPost("{id:guid}/commit")]
-    public async Task<IActionResult> Commit(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> Commit(Guid id,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ImportCommitRequest? request,
+        CancellationToken cancellationToken)
     {
         var strategy = dbContext.Database.CreateExecutionStrategy();
-        return await strategy.ExecuteAsync(() => CommitCore(id, cancellationToken));
+        return await strategy.ExecuteAsync(() => CommitCore(id, request?.DuplicateDecisions ?? [], cancellationToken));
     }
 
-    private async Task<IActionResult> CommitCore(Guid id, CancellationToken cancellationToken)
+    private async Task<IActionResult> CommitCore(Guid id,
+        IReadOnlyCollection<ImportDuplicateDecision> requestedDecisions,
+        CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
         var batch = await dbContext.ImportBatches.Include(x => x.RowResults).Include(x => x.IdentificationStrategy)
@@ -291,6 +296,49 @@ public sealed class ImportsController(
             return Conflict(new ProblemDetails { Title = "Import was already committed", Detail = $"Current status: {batch.ImportStatus}", Status = 409 });
         batch.ImportStatus = ImportStatus.Processing;
         var rows = batch.RowResults.OrderBy(x => x.ExcelRowNumber).ToList();
+        var duplicateRows = rows.Where(x => x.GrnLineId is not null && x.ResultType != ImportResultType.Rejected)
+            .ToDictionary(x => x.Id);
+        var decisions = new Dictionary<Guid, ImportDuplicateAction>();
+        var decisionErrors = new List<string>();
+        foreach (var decision in requestedDecisions)
+        {
+            if (!duplicateRows.ContainsKey(decision.RowId))
+            {
+                decisionErrors.Add($"Row {decision.RowId} is not an actionable duplicate in this batch.");
+                continue;
+            }
+            if (!Enum.TryParse<ImportDuplicateAction>(decision.Action, true, out var action))
+            {
+                decisionErrors.Add($"Row {decision.RowId} has unsupported action '{decision.Action}'. Use Skip or Proceed.");
+                continue;
+            }
+            if (!decisions.TryAdd(decision.RowId, action))
+                decisionErrors.Add($"Row {decision.RowId} has more than one duplicate decision.");
+        }
+        if (decisionErrors.Count > 0)
+            return ValidationProblem(new Dictionary<string, string[]> { ["duplicateDecisions"] = decisionErrors.ToArray() });
+
+        var unresolved = duplicateRows.Values.Where(x => !decisions.ContainsKey(x.Id)).OrderBy(x => x.ExcelRowNumber).ToList();
+        if (unresolved.Count > 0)
+        {
+            var problem = new ProblemDetails
+            {
+                Title = "Duplicate row decisions required",
+                Detail = $"Resolve {unresolved.Count} duplicate row{(unresolved.Count == 1 ? string.Empty : "s")} before committing this import.",
+                Status = 409
+            };
+            problem.Extensions["code"] = "DUPLICATE_DECISIONS_REQUIRED";
+            problem.Extensions["rows"] = unresolved.Select(x => new { rowId = x.Id, x.ExcelRowNumber }).ToArray();
+            return Conflict(problem);
+        }
+
+        var skippedDuplicateIds = decisions.Where(x => x.Value == ImportDuplicateAction.Skip)
+            .Select(x => x.Key).ToHashSet();
+        foreach (var result in rows.Where(x => skippedDuplicateIds.Contains(x.Id)))
+        {
+            result.ResultType = ImportResultType.Unchanged;
+            result.Message = "Skipped by operator; existing database row was kept unchanged.";
+        }
         var materials = await dbContext.Materials.ToDictionaryAsync(x => x.MaterialNumber, StringComparer.OrdinalIgnoreCase, cancellationToken);
         var vendors = await dbContext.Vendors.Include(x => x.Aliases)
             .ToDictionaryAsync(x => x.VendorCode, StringComparer.OrdinalIgnoreCase, cancellationToken);
@@ -433,14 +481,17 @@ public sealed class ImportsController(
 
         batch.ImportStatus = batch.RowResults.Any(x => x.ResultType is ImportResultType.Warning or ImportResultType.Rejected)
             ? ImportStatus.CompletedWithWarnings : ImportStatus.Completed;
+        batch.NewRows = batch.RowResults.Count(x => x.ResultType == ImportResultType.New);
         batch.RejectedRows = batch.RowResults.Count(x => x.ResultType == ImportResultType.Rejected);
         batch.WarningRows = batch.RowResults.Count(x => x.ResultType == ImportResultType.Warning);
         batch.UpdatedRows = batch.RowResults.Count(x => x.ResultType == ImportResultType.Updated);
         batch.UnchangedRows = batch.RowResults.Count(x => x.ResultType == ImportResultType.Unchanged);
-        audit.Add("ExcelImportCommitted", "ImportBatch", batch.Id.ToString(), newValues: new { batch.FileName, applied, batch.ImportStatus, batch.RejectedRows, batch.WarningRows });
+        var skippedDuplicates = skippedDuplicateIds.Count;
+        var proceededDuplicates = decisions.Count - skippedDuplicates;
+        audit.Add("ExcelImportCommitted", "ImportBatch", batch.Id.ToString(), newValues: new { batch.FileName, applied, skippedDuplicates, proceededDuplicates, batch.ImportStatus, batch.RejectedRows, batch.WarningRows });
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return Ok(new { batchId = batch.Id, status = batch.ImportStatus.ToString(), applied, batch.NewRows, batch.UpdatedRows, batch.UnchangedRows, batch.WarningRows, batch.RejectedRows });
+        return Ok(new { batchId = batch.Id, status = batch.ImportStatus.ToString(), applied, skippedDuplicates, proceededDuplicates, batch.NewRows, batch.UpdatedRows, batch.UnchangedRows, batch.WarningRows, batch.RejectedRows });
     }
 
     private static NormalizedImportRow ApplyDefaults(
@@ -648,22 +699,26 @@ public sealed class ImportsController(
             ImportStatus.CompletedWithWarnings => "Warning", ImportStatus.Pending => "Pending",
             ImportStatus.Processing => "Pending", _ => x.ImportStatus.ToString()
         }, durationSeconds = Math.Round(x.ProcessingDurationMs / 1000d, 2), x.FileHash,
-        identificationStrategy = x.IdentificationStrategy?.Name ?? "Active strategy", mappingTemplate = template
+        identificationStrategy = x.IdentificationStrategy?.Name ?? "Active strategy", mappingTemplate = template,
+        isDuplicateFile = x.IsDuplicateOverride
     };
 
-    private static object RowDto(ImportRowResult result)
+    private static object RowDto(ImportRowResult result, ExistingLine? existing = null)
     {
         var row = JsonSerializer.Deserialize<NormalizedImportRow>(result.RawDataJson, JsonOptions)!;
         return new
         {
-            id = result.Id.ToString(), row.GrnNumber,
+            id = result.Id.ToString(), result.ExcelRowNumber, row.GrnNumber,
             lineItem = int.TryParse(row.SapLineItemNumber, out var line) ? line : row.ExcelRowNumber,
             row.MaterialNumber, description = row.MaterialDescription, quantity = row.ReceivedQuantity,
+            previousQuantity = existing?.ReceivedQuantity, issuedQuantity = existing?.IssuedQuantity,
             packingStandard = row.PackingStandard, batch = row.BatchNumber, row.Plant,
             uom = row.Uom, vendorCode = row.VendorCode, vendorName = row.VendorName,
             invoiceNumber = row.InvoiceNumber, invoiceDate = row.InvoiceDate, binLocation = row.BinLocation,
             manufacturingDate = row.ManufacturingDate, expiryDate = row.ExpiryDate,
             expectedLabelCount = row.ExpectedLabelCount,
+            isDuplicate = result.GrnLineId is not null,
+            requiresDuplicateDecision = result.GrnLineId is not null && result.ResultType != ImportResultType.Rejected,
             status = result.ResultType.ToString(), reason = result.Message
         };
     }
@@ -805,3 +860,13 @@ public sealed record ImportProfileRequest(
     int HeaderRowNumber,
     Dictionary<string, string>? Mapping,
     List<string>? Headers);
+
+public sealed record ImportCommitRequest(List<ImportDuplicateDecision>? DuplicateDecisions);
+
+public sealed record ImportDuplicateDecision(Guid RowId, string Action);
+
+public enum ImportDuplicateAction
+{
+    Skip,
+    Proceed
+}

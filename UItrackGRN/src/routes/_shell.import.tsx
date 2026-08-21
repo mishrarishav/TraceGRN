@@ -34,6 +34,13 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   commitGRNImport,
   getImportOptions,
   inspectGRNImport,
@@ -41,6 +48,7 @@ import {
   saveImportProfile,
   type ImportFieldDefinition,
   type ImportInspection,
+  type ImportDuplicateAction,
 } from "@/services/api";
 import type { ImportBatch, ImportRowResult } from "@/types";
 import { cn } from "@/lib/utils";
@@ -77,6 +85,11 @@ function ImportPage() {
   const [dragging, setDragging] = useState(false);
   const [rows, setRows] = useState<ImportRowResult[]>([]);
   const [previewBatch, setPreviewBatch] = useState<ImportBatch | null>(null);
+  const [duplicateDecisions, setDuplicateDecisions] = useState<
+    Record<string, ImportDuplicateAction>
+  >({});
+  const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
+  const [duplicateIndex, setDuplicateIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const { data: options } = useQuery({ queryKey: ["import-options"], queryFn: getImportOptions });
 
@@ -145,16 +158,27 @@ function ImportPage() {
     onSuccess: (response) => {
       setRows(response.rows);
       setPreviewBatch(response.batch);
+      setDuplicateDecisions({});
+      setDuplicateIndex(0);
       setStep(2);
+      const duplicateCount = response.rows.filter((row) => row.requiresDuplicateDecision).length;
+      setDuplicateDialogOpen(duplicateCount > 0);
       toast.success("Selected sheet validated", {
-        description: `${response.batch.totalRows} rows checked against SQL data.`,
+        description:
+          duplicateCount > 0
+            ? `${response.batch.totalRows} rows checked; ${duplicateCount} existing row${duplicateCount === 1 ? " needs" : "s need"} your decision.`
+            : `${response.batch.totalRows} rows checked against SQL data.`,
       });
     },
     onError: (error) => toast.error("Import validation failed", { description: error.message }),
   });
 
   const commit = useMutation({
-    mutationFn: (batchId: string) => commitGRNImport(batchId),
+    mutationFn: (batchId: string) =>
+      commitGRNImport(
+        batchId,
+        Object.entries(duplicateDecisions).map(([rowId, action]) => ({ rowId, action })),
+      ),
     onSuccess: (response) => {
       setCommitted(true);
       setStep(3);
@@ -194,6 +218,9 @@ function ImportPage() {
     setProgress(0);
     setRows([]);
     setPreviewBatch(null);
+    setDuplicateDecisions({});
+    setDuplicateDialogOpen(false);
+    setDuplicateIndex(0);
     setCommitted(false);
     if (clearInput && inputRef.current) inputRef.current.value = "";
   };
@@ -243,11 +270,61 @@ function ImportPage() {
     [rows],
   );
 
+  const duplicateRows = useMemo(() => rows.filter((row) => row.requiresDuplicateDecision), [rows]);
+  const unresolvedDuplicates = duplicateRows.filter((row) => !duplicateDecisions[row.id]);
+  const skippedDuplicates = duplicateRows.filter(
+    (row) => duplicateDecisions[row.id] === "Skip",
+  ).length;
+  const proceededDuplicates = duplicateRows.filter(
+    (row) => duplicateDecisions[row.id] === "Proceed",
+  ).length;
+  const currentDuplicate = duplicateRows[duplicateIndex];
+
+  const openDuplicateResolver = (rowId?: string) => {
+    const index = rowId
+      ? duplicateRows.findIndex((row) => row.id === rowId)
+      : duplicateRows.findIndex((row) => !duplicateDecisions[row.id]);
+    setDuplicateIndex(index >= 0 ? index : 0);
+    setDuplicateDialogOpen(duplicateRows.length > 0);
+  };
+
+  const decideDuplicate = (action: ImportDuplicateAction, applyToAll: boolean) => {
+    if (!currentDuplicate) return;
+    const next = { ...duplicateDecisions };
+    if (applyToAll) {
+      duplicateRows.forEach((row) => {
+        if (!next[row.id]) next[row.id] = action;
+      });
+    } else {
+      next[currentDuplicate.id] = action;
+    }
+    setDuplicateDecisions(next);
+    const nextIndex = duplicateRows.findIndex((row) => !next[row.id]);
+    if (nextIndex < 0) {
+      setDuplicateDialogOpen(false);
+    } else {
+      setDuplicateIndex(nextIndex);
+    }
+  };
+
+  const requestCommit = () => {
+    if (unresolvedDuplicates.length > 0) {
+      openDuplicateResolver();
+      return;
+    }
+    setConfirm(true);
+  };
+
   const columns: Column<ImportRowResult>[] = [
     {
       key: "grn",
       header: "GRN No",
       render: (row) => <span className="num font-medium">{row.grnNumber}</span>,
+    },
+    {
+      key: "excel-row",
+      header: "Excel Row",
+      render: (row) => <span className="num">{row.excelRowNumber ?? "—"}</span>,
     },
     { key: "line", header: "Line", render: (row) => <span className="num">{row.lineItem}</span> },
     {
@@ -293,6 +370,31 @@ function ImportPage() {
       ),
     },
     { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} /> },
+    {
+      key: "decision",
+      header: "Duplicate Decision",
+      className: "min-w-[150px]",
+      render: (row) => {
+        if (!row.requiresDuplicateDecision) {
+          return <span className="text-xs text-muted-foreground">Not required</span>;
+        }
+        const decision = duplicateDecisions[row.id];
+        return (
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn(
+              "h-8",
+              decision === "Proceed" && "border-success/40 text-success",
+              decision === "Skip" && "border-warning/40 text-warning",
+            )}
+            onClick={() => openDuplicateResolver(row.id)}
+          >
+            {decision ?? "Resolve"}
+          </Button>
+        );
+      },
+    },
     {
       key: "reason",
       header: "Remark",
@@ -609,10 +711,29 @@ function ImportPage() {
 
       {step >= 2 ? (
         <>
-          <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-5">
+          {previewBatch?.isDuplicateFile ? (
+            <div className="rounded-xl border border-warning/35 bg-warning/10 p-4 text-sm">
+              <p className="font-semibold text-warning">This file has been imported before</p>
+              <p className="mt-1 text-muted-foreground">
+                Review the existing rows below. Proceed updates the database; Skip keeps the current
+                database value.
+              </p>
+            </div>
+          ) : null}
+          <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-6">
             <StatCard label="New Rows" value={counts.new} tone="primary" hint="Will be inserted" />
             <StatCard label="Updated" value={counts.updated} hint="Existing data revised" />
             <StatCard label="Unchanged" value={counts.unchanged} hint="No action" />
+            <StatCard
+              label="Duplicates"
+              value={duplicateRows.length}
+              tone={unresolvedDuplicates.length > 0 ? "warning" : "success"}
+              hint={
+                unresolvedDuplicates.length > 0
+                  ? `${unresolvedDuplicates.length} decisions pending`
+                  : "All decisions complete"
+              }
+            />
             <StatCard
               label="Warnings"
               value={counts.warning}
@@ -632,6 +753,7 @@ function ImportPage() {
                 <TabsTrigger value="all">All Rows</TabsTrigger>
                 <TabsTrigger value="new">New</TabsTrigger>
                 <TabsTrigger value="updated">Updated</TabsTrigger>
+                <TabsTrigger value="duplicates">Duplicates</TabsTrigger>
                 <TabsTrigger value="issues">Warnings & Rejected</TabsTrigger>
               </TabsList>
               <div className="flex gap-2">
@@ -641,8 +763,15 @@ function ImportPage() {
                 {committed ? (
                   <StatusBadge status="Completed" size="lg" />
                 ) : (
-                  <Button onClick={() => setConfirm(true)} className="gap-2">
-                    <Sparkles className="h-4 w-4" /> Commit Import
+                  <Button onClick={requestCommit} className="gap-2" disabled={commit.isPending}>
+                    {commit.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
+                    {unresolvedDuplicates.length > 0
+                      ? `Resolve ${unresolvedDuplicates.length} Duplicate${unresolvedDuplicates.length === 1 ? "" : "s"}`
+                      : "Commit Import"}
                   </Button>
                 )}
               </div>
@@ -652,6 +781,7 @@ function ImportPage() {
                 ["all", rows],
                 ["new", rows.filter((row) => row.status === "New")],
                 ["updated", rows.filter((row) => row.status === "Updated")],
+                ["duplicates", duplicateRows],
                 [
                   "issues",
                   rows.filter((row) => row.status === "Warning" || row.status === "Rejected"),
@@ -674,11 +804,75 @@ function ImportPage() {
         </>
       ) : null}
 
+      <Dialog open={duplicateDialogOpen} onOpenChange={setDuplicateDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Resolve duplicate row {duplicateRows.length > 0 ? duplicateIndex + 1 : 0} of{" "}
+              {duplicateRows.length}
+            </DialogTitle>
+            <DialogDescription>
+              Choose whether this existing SQL row should stay unchanged or be updated from the
+              uploaded file.
+            </DialogDescription>
+          </DialogHeader>
+
+          {currentDuplicate ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 rounded-xl border border-border bg-surface p-4 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">Excel row</p>
+                  <p className="num mt-1 font-semibold">
+                    {currentDuplicate.excelRowNumber ?? currentDuplicate.lineItem}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">GRN / Material</p>
+                  <p className="num mt-1 font-semibold">
+                    {currentDuplicate.grnNumber} · {currentDuplicate.materialNumber}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Current SQL quantity</p>
+                  <p className="num mt-1 font-semibold">
+                    {currentDuplicate.previousQuantity?.toLocaleString() ?? "Not available"}{" "}
+                    {currentDuplicate.uom ?? ""}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Incoming quantity</p>
+                  <p className="num mt-1 font-semibold text-primary">
+                    {currentDuplicate.quantity.toLocaleString()} {currentDuplicate.uom ?? ""}
+                  </p>
+                </div>
+              </div>
+              <p className="rounded-lg border border-border p-3 text-sm text-muted-foreground">
+                {currentDuplicate.reason ?? "The same business identity already exists."}
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button variant="outline" onClick={() => decideDuplicate("Skip", false)}>
+                  Skip
+                </Button>
+                <Button variant="outline" onClick={() => decideDuplicate("Skip", true)}>
+                  Skip All
+                </Button>
+                <Button onClick={() => decideDuplicate("Proceed", false)}>Proceed</Button>
+                <Button onClick={() => decideDuplicate("Proceed", true)}>Proceed All</Button>
+              </div>
+              <p className="text-center text-xs text-muted-foreground">
+                Skip keeps the existing row. Proceed applies the incoming values. “All” affects
+                every remaining unresolved duplicate.
+              </p>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <ConfirmationDialog
         open={confirm}
         onOpenChange={setConfirm}
         title="Commit this import batch?"
-        description={`${counts.new} new and ${counts.updated} updated rows will be written to the traceability database. Rejected rows are skipped.`}
+        description={`${counts.new} new rows and ${proceededDuplicates} approved duplicates will be processed. ${skippedDuplicates} duplicates and ${counts.rejected} rejected rows will be skipped.`}
         confirmLabel="Commit Import"
         onConfirm={() => previewBatch && commit.mutate(previewBatch.batchId)}
       />

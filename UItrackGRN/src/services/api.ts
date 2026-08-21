@@ -292,6 +292,11 @@ export interface ImportProfileMutation {
   mapping: Record<string, string>;
   headers: string[];
 }
+export type ImportDuplicateAction = "Skip" | "Proceed";
+export interface ImportDuplicateDecision {
+  rowId: string;
+  action: ImportDuplicateAction;
+}
 export function inspectGRNImport(file: File) {
   const body = new FormData();
   body.append("file", file);
@@ -302,9 +307,19 @@ export const saveImportProfile = (request: ImportProfileMutation) =>
     "/imports/profiles",
     { method: "POST", body: JSON.stringify(request) },
   );
-export const commitGRNImport = (batchId: string) =>
-  apiRequest<{ batchId: string; status: string; applied: number }>(`/imports/${batchId}/commit`, {
+export const commitGRNImport = (
+  batchId: string,
+  duplicateDecisions: ImportDuplicateDecision[] = [],
+) =>
+  apiRequest<{
+    batchId: string;
+    status: string;
+    applied: number;
+    skippedDuplicates: number;
+    proceededDuplicates: number;
+  }>(`/imports/${batchId}/commit`, {
     method: "POST",
+    body: JSON.stringify({ duplicateDecisions }),
   });
 export const getImportBatches = () => apiRequest<ImportBatch[]>("/imports");
 export const getImportBatch = (id: string) => apiRequest<ImportPreviewResponse>(`/imports/${id}`);
