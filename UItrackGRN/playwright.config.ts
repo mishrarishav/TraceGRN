@@ -33,14 +33,18 @@ export default defineConfig({
     reducedMotion: "reduce",
   },
   webServer: [
-    {
-      command: `${apiExecutable} --urls ${apiOrigin}`,
-      cwd: "../APItrackGRN/src/APItrackGRN.Api",
-      url: `${apiOrigin}/health/live`,
-      env: { ASPNETCORE_ENVIRONMENT: "Testing" },
-      reuseExistingServer: !process.env["CI"],
-      timeout: 120_000,
-    },
+    ...(apiOrigin.startsWith("http://127.0.0.1")
+      ? [
+          {
+            command: `${apiExecutable} --urls ${apiOrigin}`,
+            cwd: "../APItrackGRN/src/APItrackGRN.Api",
+            url: `${apiOrigin}/health/live`,
+            env: { ASPNETCORE_ENVIRONMENT: "Testing" },
+            reuseExistingServer: !process.env["CI"],
+            timeout: 120_000,
+          },
+        ]
+      : []),
     {
       command: `npm run dev -- --host 127.0.0.1 --port ${uiPort}`,
       url: `${uiOrigin}/login`,

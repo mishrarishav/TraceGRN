@@ -18,7 +18,7 @@ export function SidebarNav({
   return (
     <nav
       data-testid="sidebar-scroll"
-      className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-2 py-4"
+      className="flex min-h-0 flex-1 touch-pan-y flex-col gap-5 overflow-y-auto overscroll-contain px-2 py-4 [scrollbar-gutter:stable]"
     >
       {navGroups.map((group) => (
         <div key={group}>
