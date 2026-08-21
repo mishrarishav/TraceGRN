@@ -120,7 +120,7 @@ function GRNDetailPage() {
     },
     {
       key: "pack",
-      header: "Pack Std",
+      header: "Pack Qty",
       render: (l) => <span className="num">{l.packingStandard}</span>,
     },
     {

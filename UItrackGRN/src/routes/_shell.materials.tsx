@@ -131,7 +131,7 @@ function MaterialsPage() {
     { key: "uom", header: "UoM", render: (m) => <span className="num">{m.uom}</span> },
     {
       key: "pack",
-      header: "Pack Std",
+      header: "Pack Qty",
       sortValue: (m) => m.packingStandard,
       render: (m) => <span className="num">{m.packingStandard}</span>,
     },
@@ -294,9 +294,9 @@ function MaterialsPage() {
                   onChange={(event) => setForm({ ...form, uom: event.target.value })}
                 />
               </Field>
-              <Field label="Packing standard">
+              <Field label="Pack Qty">
                 <Input
-                  aria-label="Packing standard"
+                  aria-label="Pack Qty"
                   required
                   min={0.0001}
                   step="any"
@@ -375,7 +375,7 @@ function MaterialsPage() {
                     tone="success"
                   />
                   <StatCard
-                    label="Pack Std"
+                    label="Pack Qty"
                     value={`${selected.packingStandard} ${selected.uom}`}
                   />
                 </div>

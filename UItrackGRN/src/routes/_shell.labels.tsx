@@ -165,7 +165,7 @@ function LabelsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Label Management"
-        description="Every pack gets a unique QR label derived from the GRN packing standard."
+        description="Every pack gets a unique QR label derived from the GRN pack quantity."
         icon={<QrCode className="h-5 w-5" />}
         actions={
           <>

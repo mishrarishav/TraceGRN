@@ -273,7 +273,7 @@ function ImportPage() {
     },
     {
       key: "pack",
-      header: "Pack Std",
+      header: "Pack Qty",
       render: (row) => <span className="num">{row.packingStandard}</span>,
     },
     { key: "batch", header: "Batch", render: (row) => <span className="num">{row.batch}</span> },
