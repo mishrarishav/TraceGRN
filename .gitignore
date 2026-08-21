@@ -26,6 +26,7 @@ APItrackGRN/src/APItrackGRN.Api/appsettings.Development.json
 .env
 .env.*
 !.env.example
+server.env
 
 # Wrangler / Cloudflare
 .wrangler/

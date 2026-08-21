@@ -238,14 +238,70 @@ export const getImportOptions = () => apiRequest<ImportOptions>("/imports/option
 export function previewGRNImport(
   file: File,
   mappingTemplateId?: string,
+  selection?: {
+    sheetName: string;
+    headerRowNumber: number;
+    mapping: Record<string, string>;
+  },
   overrideDuplicate = false,
 ) {
   const body = new FormData();
   body.append("file", file);
   if (mappingTemplateId) body.append("mappingTemplateId", mappingTemplateId);
+  if (selection) {
+    body.append("sheetName", selection.sheetName);
+    body.append("headerRowNumber", String(selection.headerRowNumber));
+    body.append("mappingJson", JSON.stringify(selection.mapping));
+  }
   body.append("overrideDuplicate", String(overrideDuplicate));
   return apiRequest<ImportPreviewResponse>("/imports/preview", { method: "POST", body });
 }
+export interface ImportFieldDefinition {
+  key: string;
+  label: string;
+  required: boolean;
+  aliases: string[];
+}
+export interface ImportSheetInspection {
+  name: string;
+  index: number;
+  rowCount: number;
+  columnCount: number;
+  previewTruncated: boolean;
+  rows: string[][];
+}
+export interface ImportInspection {
+  fileName: string;
+  extension: string;
+  sheets: ImportSheetInspection[];
+  selectedSheetName: string;
+  selectedHeaderRow: number;
+  matchedTemplate: { id: string; name: string; confidence: number } | null;
+  mapping: Record<string, string>;
+  fields: ImportFieldDefinition[];
+  requiredMapped: number;
+  requiredTotal: number;
+  readyForImport: boolean;
+}
+export interface ImportProfileMutation {
+  templateId?: string;
+  name: string;
+  fileName: string;
+  sheetName: string;
+  headerRowNumber: number;
+  mapping: Record<string, string>;
+  headers: string[];
+}
+export function inspectGRNImport(file: File) {
+  const body = new FormData();
+  body.append("file", file);
+  return apiRequest<ImportInspection>("/imports/inspect", { method: "POST", body });
+}
+export const saveImportProfile = (request: ImportProfileMutation) =>
+  apiRequest<{ id: string; name: string; mapping: Record<string, string>; sheetAliases: string[] }>(
+    "/imports/profiles",
+    { method: "POST", body: JSON.stringify(request) },
+  );
 export const commitGRNImport = (batchId: string) =>
   apiRequest<{ batchId: string; status: string; applied: number }>(`/imports/${batchId}/commit`, {
     method: "POST",
@@ -273,6 +329,11 @@ export const createUser = (request: UserMutation) =>
   apiRequest<{ id: string }>("/users", { method: "POST", body: JSON.stringify(request) });
 export const updateUser = (id: string, request: UserMutation) =>
   apiRequest<void>(`/users/${id}`, { method: "PUT", body: JSON.stringify(request) });
+export const resetUserPassword = (id: string, newPassword: string, confirmPassword: string) =>
+  apiRequest<{ userId: string; revokedSessions: number }>(`/users/${id}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ newPassword, confirmPassword }),
+  });
 export const deactivateUser = (id: string) =>
   apiRequest<void>(`/users/${id}`, { method: "DELETE" });
 

@@ -68,10 +68,39 @@ public sealed class UsersController(TrackGrnDbContext dbContext, IAuditWriter au
         user.EmployeeCode = employeeCode;
         user.RoleId = role.Id;
         user.IsActive = request.IsActive;
-        if (!string.IsNullOrWhiteSpace(request.Password)) user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password, workFactor: 12);
-        audit.Add("UserUpdated", "User", id.ToString(), old, new { user.Username, user.FullName, user.EmployeeCode, Role = role.Name, user.IsActive, PasswordChanged = !string.IsNullOrWhiteSpace(request.Password) });
+        audit.Add("UserUpdated", "User", id.ToString(), old, new { user.Username, user.FullName, user.EmployeeCode, Role = role.Name, user.IsActive });
         await dbContext.SaveChangesAsync(cancellationToken);
         return NoContent();
+    }
+
+    [HttpPost("{id:guid}/reset-password")]
+    public async Task<IActionResult> ResetPassword(Guid id, ResetPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 12)
+            errors["newPassword"] = ["Password must contain at least 12 characters."];
+        if (!string.Equals(request.NewPassword, request.ConfirmPassword, StringComparison.Ordinal))
+            errors["confirmPassword"] = ["Password confirmation does not match."];
+        if (errors.Count > 0) return ValidationProblem(errors);
+
+        var user = await dbContext.Users.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (user is null) return NotFound();
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword, workFactor: 12);
+        var now = DateTimeOffset.UtcNow;
+        var activeRefreshTokens = await dbContext.RefreshTokens
+            .Where(x => x.UserId == id && x.RevokedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var token in activeRefreshTokens) token.RevokedAt = now;
+
+        audit.Add("UserPasswordReset", "User", id.ToString(), newValues: new
+        {
+            user.Username,
+            RevokedSessions = activeRefreshTokens.Count
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return Ok(new { userId = id, revokedSessions = activeRefreshTokens.Count });
     }
 
     [HttpDelete("{id:guid}")]
@@ -95,10 +124,12 @@ public sealed class UsersController(TrackGrnDbContext dbContext, IAuditWriter au
         if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Trim().Length < 3) errors["username"] = ["Username must contain at least 3 characters."];
         if (string.IsNullOrWhiteSpace(request.Role)) errors["role"] = ["Role is required."];
         if (requirePassword && (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 12)) errors["password"] = ["Password must contain at least 12 characters."];
-        if (!string.IsNullOrWhiteSpace(request.Password) && request.Password.Length < 12) errors["password"] = ["Password must contain at least 12 characters."];
+        if (requirePassword && !string.IsNullOrWhiteSpace(request.Password) && request.Password.Length < 12) errors["password"] = ["Password must contain at least 12 characters."];
         return errors.Count == 0 ? null : errors;
     }
 }
 
 public sealed record UserRequest(string Name, string EmployeeCode, string Username, string Role,
     string? Password, bool IsActive = true);
+
+public sealed record ResetPasswordRequest(string NewPassword, string ConfirmPassword);

@@ -22,6 +22,98 @@ public sealed class SqlServerIntegrationCollection;
 public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture<SqlTrackGrnFactory>
 {
     [Fact]
+    public async Task Admin_can_reset_user_password_and_revoke_existing_refresh_session()
+    {
+        using var adminClient = await factory.CreateAuthenticatedClient();
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var username = $"reset-{suffix}";
+        const string oldPassword = "Old-Password-2026!";
+        const string newPassword = "New-Password-2026!";
+        var create = await adminClient.PostAsJsonAsync("/api/users", new
+        {
+            name = "Password Reset Test", employeeCode = $"RST-{suffix}", username,
+            role = "Viewer", password = oldPassword, isActive = true
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var userId = (await create.Content.ReadFromJsonAsync<IdDto>())!.Id;
+
+        using var anonymous = factory.CreateClient();
+        var oldLogin = await anonymous.PostAsJsonAsync("/api/auth/login", new { username, password = oldPassword });
+        Assert.Equal(HttpStatusCode.OK, oldLogin.StatusCode);
+        using var oldSession = JsonDocument.Parse(await oldLogin.Content.ReadAsStringAsync());
+        var oldRefreshToken = oldSession.RootElement.GetProperty("refreshToken").GetString();
+
+        var reset = await adminClient.PostAsJsonAsync($"/api/users/{userId}/reset-password", new
+        {
+            newPassword, confirmPassword = newPassword
+        });
+        Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
+        using var resetJson = JsonDocument.Parse(await reset.Content.ReadAsStringAsync());
+        Assert.Equal(1, resetJson.RootElement.GetProperty("revokedSessions").GetInt32());
+
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await anonymous.PostAsJsonAsync("/api/auth/login", new { username, password = oldPassword })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await anonymous.PostAsJsonAsync("/api/auth/login", new { username, password = newPassword })).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await anonymous.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = oldRefreshToken })).StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TrackGrnDbContext>();
+        Assert.True(await db.AuditLogs.AnyAsync(x => x.Action == "UserPasswordReset" && x.EntityId == userId.ToString()));
+    }
+
+    [Fact]
+    public async Task Saved_import_profile_recognizes_sheet_and_custom_column_aliases()
+    {
+        using var client = await factory.CreateAuthenticatedClient();
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var workbook = new XLWorkbook();
+        workbook.AddWorksheet("Read me").Cell(1, 1).Value = "Instructions";
+        var data = workbook.AddWorksheet("Plant Custom Data");
+        data.Cell(1, 1).Value = "Generated report";
+        string[] headers = ["Receipt ID", "Receipt On", "Part Code X", "Accepted Qty"];
+        for (var index = 0; index < headers.Length; index++) data.Cell(2, index + 1).Value = headers[index];
+        data.Cell(3, 1).Value = $"91{DateTime.UtcNow.Ticks.ToString()[^8..]}";
+        data.Cell(3, 2).Value = new DateTime(2026, 8, 21);
+        data.Cell(3, 3).Value = "M06030952";
+        data.Cell(3, 4).Value = 500m;
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        var bytes = stream.ToArray();
+
+        var profileName = $"Custom plant format {suffix}";
+        var save = await client.PostAsJsonAsync("/api/imports/profiles", new
+        {
+            templateId = (Guid?)null,
+            name = profileName,
+            fileName = $"plant-{suffix}.xlsx",
+            sheetName = "Plant Custom Data",
+            headerRowNumber = 2,
+            mapping = new Dictionary<string, string>
+            {
+                ["Receipt ID"] = "GRNNumber", ["Receipt On"] = "GRNDate",
+                ["Part Code X"] = "MaterialNumber", ["Accepted Qty"] = "ReceivedQuantity"
+            },
+            headers
+        });
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+
+        using var inspectForm = new MultipartFormDataContent();
+        using var inspectFile = new ByteArrayContent(bytes);
+        inspectFile.Headers.ContentType = MediaTypeHeaderValue.Parse("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        inspectForm.Add(inspectFile, "file", $"plant-{suffix}.xlsx");
+        var inspect = await client.PostAsync("/api/imports/inspect", inspectForm);
+        Assert.True(inspect.IsSuccessStatusCode, await inspect.Content.ReadAsStringAsync());
+        using var inspected = JsonDocument.Parse(await inspect.Content.ReadAsStringAsync());
+        Assert.Equal("Plant Custom Data", inspected.RootElement.GetProperty("selectedSheetName").GetString());
+        Assert.Equal(2, inspected.RootElement.GetProperty("selectedHeaderRow").GetInt32());
+        Assert.Equal(profileName, inspected.RootElement.GetProperty("matchedTemplate").GetProperty("name").GetString());
+        Assert.True(inspected.RootElement.GetProperty("readyForImport").GetBoolean());
+        Assert.Equal(2, inspected.RootElement.GetProperty("sheets").GetArrayLength());
+    }
+
+    [Fact]
     public async Task Import_inward_issue_and_printer_simulation_persist_to_sql_server()
     {
         using var client = await factory.CreateAuthenticatedClient();

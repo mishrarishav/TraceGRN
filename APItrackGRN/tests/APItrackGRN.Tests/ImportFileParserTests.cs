@@ -67,4 +67,39 @@ public sealed class ImportFileParserTests
         Assert.Equal(480m, row.ReceivedQuantity);
         Assert.Equal(240m, row.PackingStandard);
     }
+
+    [Fact]
+    public void Parses_selected_sheet_header_row_and_custom_aliases()
+    {
+        using var workbook = new XLWorkbook();
+        workbook.AddWorksheet("Instructions").Cell(1, 1).Value = "Do not import this sheet";
+        var sheet = workbook.AddWorksheet("Plant GRN Data");
+        sheet.Cell(1, 1).Value = "Generated report";
+        sheet.Cell(2, 1).Value = "Receipt ID";
+        sheet.Cell(2, 2).Value = "Receipt On";
+        sheet.Cell(2, 3).Value = "Part Code X";
+        sheet.Cell(2, 4).Value = "Accepted Qty";
+        sheet.Cell(3, 1).Value = "5000515999";
+        sheet.Cell(3, 2).Value = new DateTime(2026, 8, 21);
+        sheet.Cell(3, 3).Value = "M06030952";
+        sheet.Cell(3, 4).Value = 750m;
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        var mapping = new Dictionary<string, string>
+        {
+            ["Receipt ID"] = "GRNNumber",
+            ["Receipt On"] = "GRNDate",
+            ["Part Code X"] = "MaterialNumber",
+            ["Accepted Qty"] = "ReceivedQuantity"
+        };
+
+        var row = Assert.Single(ImportFileParser.Parse(
+            stream.ToArray(), ".xlsx", mapping, "Plant GRN Data", 2));
+
+        Assert.Equal("5000515999", row.GrnNumber);
+        Assert.Equal(new DateOnly(2026, 8, 21), row.GrnDate);
+        Assert.Equal("M06030952", row.MaterialNumber);
+        Assert.Equal(750m, row.ReceivedQuantity);
+        Assert.Equal(3, row.ExcelRowNumber);
+    }
 }

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { UserPlus, Users } from "lucide-react";
+import { KeyRound, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/PageHeader";
 import { DataTable, type Column } from "@/components/common/DataTable";
@@ -31,6 +31,7 @@ import {
   createUser,
   deactivateUser,
   getUsers,
+  resetUserPassword,
   updateUser,
   type UserMutation,
 } from "@/services/api";
@@ -56,6 +57,9 @@ function UsersPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
   const [form, setForm] = useState<UserMutation>(emptyForm);
+  const [resetTarget, setResetTarget] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["users"] });
   const save = useMutation({
@@ -78,6 +82,18 @@ function UsersPage() {
       toast.success("User deactivated");
     },
     onError: (error) => toast.error("Unable to deactivate user", { description: error.message }),
+  });
+  const resetPassword = useMutation({
+    mutationFn: () => resetUserPassword(resetTarget!.id, newPassword, confirmPassword),
+    onSuccess: (response) => {
+      setResetTarget(null);
+      setNewPassword("");
+      setConfirmPassword("");
+      toast.success("Password reset successfully", {
+        description: `${response.revokedSessions} active session${response.revokedSessions === 1 ? "" : "s"} revoked.`,
+      });
+    },
+    onError: (error) => toast.error("Unable to reset password", { description: error.message }),
   });
 
   const edit = (user: User) => {
@@ -124,6 +140,25 @@ function UsersPage() {
       render: (user) => <span className="num text-xs text-muted-foreground">{user.lastLogin}</span>,
     },
     { key: "status", header: "Status", render: (user) => <StatusBadge status={user.status} /> },
+    {
+      key: "actions",
+      header: "Actions",
+      render: (user) => (
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2"
+          onClick={(event) => {
+            event.stopPropagation();
+            setResetTarget(user);
+            setNewPassword("");
+            setConfirmPassword("");
+          }}
+        >
+          <KeyRound className="h-3.5 w-3.5" /> Reset Password
+        </Button>
+      ),
+    },
   ];
 
   return (
@@ -219,17 +254,19 @@ function UsersPage() {
                   onChange={(event) => setForm({ ...form, username: event.target.value })}
                 />
               </Field>
-              <Field label={editing ? "New password (optional)" : "Password"}>
-                <Input
-                  aria-label={editing ? "New password (optional)" : "Password"}
-                  required={!editing}
-                  minLength={12}
-                  type="password"
-                  autoComplete="new-password"
-                  value={form.password}
-                  onChange={(event) => setForm({ ...form, password: event.target.value })}
-                />
-              </Field>
+              {!editing ? (
+                <Field label="Password">
+                  <Input
+                    aria-label="Password"
+                    required
+                    minLength={12}
+                    type="password"
+                    autoComplete="new-password"
+                    value={form.password}
+                    onChange={(event) => setForm({ ...form, password: event.target.value })}
+                  />
+                </Field>
+              ) : null}
               <Field label="Role">
                 <Select
                   value={form.role}
@@ -270,6 +307,64 @@ function UsersPage() {
               </Button>
               <Button type="submit" disabled={save.isPending}>
                 {save.isPending ? "Saving…" : "Save User"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(resetTarget)} onOpenChange={(value) => !value && setResetTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset password</DialogTitle>
+            <DialogDescription>
+              Set a new password for {resetTarget?.name}. Their active refresh sessions will be
+              revoked.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (newPassword.length < 12) {
+                toast.error("Password must contain at least 12 characters");
+                return;
+              }
+              if (newPassword !== confirmPassword) {
+                toast.error("Password confirmation does not match");
+                return;
+              }
+              resetPassword.mutate();
+            }}
+          >
+            <Field label="New password">
+              <Input
+                aria-label="New password"
+                required
+                minLength={12}
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+              />
+            </Field>
+            <Field label="Confirm new password">
+              <Input
+                aria-label="Confirm new password"
+                required
+                minLength={12}
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+              />
+            </Field>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setResetTarget(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={resetPassword.isPending}>
+                {resetPassword.isPending ? "Resetting…" : "Reset Password"}
               </Button>
             </DialogFooter>
           </form>

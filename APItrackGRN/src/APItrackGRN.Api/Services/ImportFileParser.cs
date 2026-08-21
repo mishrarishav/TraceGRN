@@ -1,128 +1,86 @@
 using System.Globalization;
-using System.Text;
-using ClosedXML.Excel;
 
 namespace APItrackGRN.Api.Services;
 
 public static class ImportFileParser
 {
     private static readonly string[] RequiredFields = ["GRNNumber", "GRNDate", "MaterialNumber", "ReceivedQuantity"];
+    private static readonly IReadOnlyList<ImportFieldDefinition> FieldDefinitions = BuildFieldDefinitions();
+    private static readonly IReadOnlyDictionary<string, string> BuiltInAliases = BuildAliases(FieldDefinitions);
 
-    private static readonly IReadOnlyDictionary<string, string> BuiltInAliases = BuildAliases();
+    public static IReadOnlyList<ImportFieldDefinition> Fields => FieldDefinitions;
 
     public static List<NormalizedImportRow> Parse(
         byte[] bytes,
         string extension,
-        IReadOnlyDictionary<string, string> configuredMapping)
+        IReadOnlyDictionary<string, string> configuredMapping,
+        string? sheetName = null,
+        int? headerRowNumber = null)
     {
-        return extension.ToLowerInvariant() switch
+        var workbook = ImportWorkbookReader.Read(bytes, extension);
+        var sheet = string.IsNullOrWhiteSpace(sheetName)
+            ? workbook.Sheets.FirstOrDefault()
+            : workbook.Sheets.FirstOrDefault(x => string.Equals(x.Name, sheetName, StringComparison.OrdinalIgnoreCase));
+        if (sheet is null)
+            throw new InvalidDataException(string.IsNullOrWhiteSpace(sheetName)
+                ? "Workbook does not contain a worksheet."
+                : $"Worksheet '{sheetName}' was not found.");
+        if (sheet.Rows.Count == 0) throw new InvalidDataException($"Worksheet '{sheet.Name}' is empty.");
+
+        var headerIndex = headerRowNumber is null ? FindFirstUsedRow(sheet.Rows) : headerRowNumber.Value - 1;
+        if (headerIndex < 0 || headerIndex >= sheet.Rows.Count)
+            throw new InvalidDataException("The selected header row is outside the worksheet.");
+        var headers = sheet.Rows[headerIndex].Select((value, index) => new { Column = index + 1, Value = value.Trim() })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+            .ToDictionary(x => x.Column, x => x.Value);
+        var columns = ResolveColumns(headers, configuredMapping);
+        EnsureRequiredColumns(columns);
+
+        var output = new List<NormalizedImportRow>();
+        for (var index = headerIndex + 1; index < sheet.Rows.Count; index++)
         {
-            ".xlsx" => ParseWorkbook(bytes, configuredMapping),
-            ".csv" or ".tsv" or ".txt" => ParseDelimited(bytes, configuredMapping),
-            _ => throw new InvalidDataException("Only .xlsx, .csv, .tsv and .txt files are supported.")
-        };
+            var values = sheet.Rows[index];
+            string Text(string field) => columns.TryGetValue(field, out var column) && column <= values.Count
+                ? values[column - 1].Trim()
+                : string.Empty;
+            DateOnly? Date(string field) => ParseNullableDate(Text(field));
+            decimal Number(string field) => ParseNumber(Text(field));
+            if (string.IsNullOrWhiteSpace(Text("GRNNumber")) && string.IsNullOrWhiteSpace(Text("MaterialNumber"))) continue;
+            output.Add(CreateRow(index + 1, Text, Date, Number));
+        }
+
+        if (output.Count == 0) throw new InvalidDataException($"Worksheet '{sheet.Name}' does not contain any material rows below row {headerIndex + 1}.");
+        return output;
     }
 
-    private static List<NormalizedImportRow> ParseWorkbook(
-        byte[] bytes,
-        IReadOnlyDictionary<string, string> configuredMapping)
+    public static Dictionary<string, string> SuggestMapping(
+        IReadOnlyList<string> headers,
+        IReadOnlyDictionary<string, string>? configuredMapping = null)
     {
-        try
-        {
-            using var workbook = new XLWorkbook(new MemoryStream(bytes));
-            var sheet = workbook.Worksheets.FirstOrDefault()
-                ?? throw new InvalidDataException("Workbook does not contain a worksheet.");
-            var headerRow = sheet.FirstRowUsed()
-                ?? throw new InvalidDataException("Worksheet is empty.");
-            var headers = headerRow.CellsUsed().ToDictionary(
-                cell => cell.Address.ColumnNumber,
-                cell => cell.GetString().Trim());
-            var columns = ResolveColumns(headers, configuredMapping);
-            EnsureRequiredColumns(columns);
-
-            var output = new List<NormalizedImportRow>();
-            var lastRow = sheet.LastRowUsed()?.RowNumber() ?? headerRow.RowNumber();
-            for (var rowNumber = headerRow.RowNumber() + 1; rowNumber <= lastRow; rowNumber++)
-            {
-                var row = sheet.Row(rowNumber);
-                string Text(string field) => columns.TryGetValue(field, out var column)
-                    ? row.Cell(column).GetFormattedString().Trim()
-                    : string.Empty;
-                DateOnly? Date(string field)
-                {
-                    if (!columns.TryGetValue(field, out var column)) return null;
-                    var cell = row.Cell(column);
-                    return cell.TryGetValue<DateTime>(out var date)
-                        ? DateOnly.FromDateTime(date)
-                        : ParseNullableDate(cell.GetFormattedString());
-                }
-                decimal Number(string field)
-                {
-                    if (!columns.TryGetValue(field, out var column)) return 0;
-                    var cell = row.Cell(column);
-                    return cell.TryGetValue<decimal>(out var number)
-                        ? number
-                        : ParseNumber(cell.GetFormattedString());
-                }
-
-                if (string.IsNullOrWhiteSpace(Text("GRNNumber")) && string.IsNullOrWhiteSpace(Text("MaterialNumber"))) continue;
-                output.Add(CreateRow(rowNumber, Text, Date, Number));
-            }
-
-            if (output.Count == 0) throw new InvalidDataException("Workbook does not contain any material rows.");
-            return output;
-        }
-        catch (InvalidDataException)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            throw new InvalidDataException($"Unable to read the XLSX workbook: {exception.Message}");
-        }
+        configuredMapping ??= new Dictionary<string, string>();
+        var indexed = headers.Select((value, index) => new { Column = index + 1, Value = value.Trim() })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+            .ToDictionary(x => x.Column, x => x.Value);
+        var resolved = ResolveColumns(indexed, configuredMapping);
+        var mapping = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (field, column) in resolved)
+            if (indexed.TryGetValue(column, out var header)) mapping[header] = field;
+        return mapping;
     }
 
-    private static List<NormalizedImportRow> ParseDelimited(
-        byte[] bytes,
-        IReadOnlyDictionary<string, string> configuredMapping)
+    public static bool HasRequiredFields(IReadOnlyDictionary<string, string> mapping) =>
+        RequiredFields.All(field => mapping.Values.Contains(field, StringComparer.OrdinalIgnoreCase));
+
+    public static string NormalizeHeader(string value) => new(value
+        .Where(char.IsLetterOrDigit)
+        .Select(char.ToLowerInvariant)
+        .ToArray());
+
+    private static int FindFirstUsedRow(IReadOnlyList<IReadOnlyList<string>> rows)
     {
-        try
-        {
-            var text = DecodeText(bytes);
-            var delimiter = DetectDelimiter(text);
-            var rows = ReadDelimitedRows(text, delimiter);
-            if (rows.Count == 0) throw new InvalidDataException("Delimited file is empty.");
-
-            var headers = rows[0].Select((value, index) => new { Column = index + 1, Value = value.Trim() })
-                .ToDictionary(x => x.Column, x => x.Value);
-            var columns = ResolveColumns(headers, configuredMapping);
-            EnsureRequiredColumns(columns);
-
-            var output = new List<NormalizedImportRow>();
-            for (var index = 1; index < rows.Count; index++)
-            {
-                var values = rows[index];
-                string Text(string field) => columns.TryGetValue(field, out var column) && column <= values.Count
-                    ? values[column - 1].Trim()
-                    : string.Empty;
-                DateOnly? Date(string field) => ParseNullableDate(Text(field));
-                decimal Number(string field) => ParseNumber(Text(field));
-
-                if (string.IsNullOrWhiteSpace(Text("GRNNumber")) && string.IsNullOrWhiteSpace(Text("MaterialNumber"))) continue;
-                output.Add(CreateRow(index + 1, Text, Date, Number));
-            }
-
-            if (output.Count == 0) throw new InvalidDataException("Delimited file does not contain any material rows.");
-            return output;
-        }
-        catch (InvalidDataException)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            throw new InvalidDataException($"Unable to read the delimited file: {exception.Message}");
-        }
+        for (var index = 0; index < rows.Count; index++)
+            if (rows[index].Any(value => !string.IsNullOrWhiteSpace(value))) return index;
+        return -1;
     }
 
     private static NormalizedImportRow CreateRow(
@@ -133,27 +91,13 @@ public static class ImportFileParser
     {
         var expectedLabels = number("ExpectedLabelCount");
         return new NormalizedImportRow(
-            rowNumber,
-            text("GRNNumber"),
-            date("GRNDate") ?? default,
-            text("SAPLineItemNumber"),
-            text("MaterialNumber").ToUpperInvariant(),
-            text("MaterialDescription"),
-            number("ReceivedQuantity"),
-            number("PackingStandard"),
-            text("BatchNumber"),
-            text("UOM"),
-            text("Plant"),
-            text("StorageLocation"),
-            text("PurchaseOrder"),
-            text("VendorCode"),
-            text("VendorName"),
-            text("InvoiceNumber"),
-            date("InvoiceDate"),
-            text("BinLocation"),
-            date("ManufacturingDate"),
-            date("ExpiryDate"),
-            expectedLabels > 0 && expectedLabels <= int.MaxValue ? decimal.ToInt32(decimal.Truncate(expectedLabels)) : null);
+            rowNumber, text("GRNNumber"), date("GRNDate") ?? default, text("SAPLineItemNumber"),
+            text("MaterialNumber").ToUpperInvariant(), text("MaterialDescription"), number("ReceivedQuantity"),
+            number("PackingStandard"), text("BatchNumber"), text("UOM"), text("Plant"),
+            text("StorageLocation"), text("PurchaseOrder"), text("VendorCode"), text("VendorName"),
+            text("InvoiceNumber"), date("InvoiceDate"), text("BinLocation"), date("ManufacturingDate"),
+            date("ExpiryDate"), expectedLabels > 0 && expectedLabels <= int.MaxValue
+                ? decimal.ToInt32(decimal.Truncate(expectedLabels)) : null);
     }
 
     private static Dictionary<string, int> ResolveColumns(
@@ -165,7 +109,6 @@ public static class ImportFileParser
             .GroupBy(pair => NormalizeHeader(pair.Key), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Last().Value, StringComparer.OrdinalIgnoreCase);
         var columns = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
         foreach (var (column, sourceHeader) in headers)
         {
             var normalized = NormalizeHeader(sourceHeader);
@@ -174,10 +117,8 @@ public static class ImportFileParser
                 columns.TryAdd(configuredField, column);
                 continue;
             }
-
             if (BuiltInAliases.TryGetValue(normalized, out var field)) columns.TryAdd(field, column);
         }
-
         return columns;
     }
 
@@ -185,45 +126,43 @@ public static class ImportFileParser
     {
         var missing = RequiredFields.Where(field => !columns.ContainsKey(field)).ToList();
         if (missing.Count > 0)
-            throw new InvalidDataException($"Required columns could not be identified: {string.Join(", ", missing)}. Use a mapping template or a supported business header.");
+            throw new InvalidDataException($"Required columns could not be identified: {string.Join(", ", missing)}. Select the header row and map the missing columns.");
     }
 
-    private static IReadOnlyDictionary<string, string> BuildAliases()
+    private static IReadOnlyList<ImportFieldDefinition> BuildFieldDefinitions() =>
+    [
+        Field("GRNNumber", "GRN Number", true, "GRN No", "GR No", "GR Number", "Goods Receipt No", "Goods Receipt Number"),
+        Field("GRNDate", "GRN Date", true, "GR Date", "Gr date", "Goods Receipt Date"),
+        Field("SAPLineItemNumber", "SAP Line Item", false, "Line Item", "Item", "Item No", "SAP Line Item"),
+        Field("MaterialNumber", "Material Number", true, "Material", "Material No", "Material Code", "Part No", "Part Number", "Parts Number"),
+        Field("MaterialDescription", "Material Description", false, "Material Desc", "Description", "Part Description"),
+        Field("ReceivedQuantity", "Received Quantity", true, "Quantity", "Qty", "Received Qty", "GR Quantity"),
+        Field("PackingStandard", "Packing Standard", false, "Pack Qty", "Packing Qty", "Pack Quantity", "Standard Pack Qty"),
+        Field("BatchNumber", "Batch Number", false, "Batch", "Batch No", "Lot", "Lot No"),
+        Field("UOM", "UOM", false, "Unit", "Unit of Measure"),
+        Field("Plant", "Plant", false, "Plant Code"),
+        Field("StorageLocation", "Storage Location", false, "Storage Loc", "SLoc"),
+        Field("PurchaseOrder", "Purchase Order", false, "PO", "PO Number", "Purchase Order No"),
+        Field("VendorCode", "Vendor Code", false, "Vendor", "SAP Vendor Code", "Supplier Code"),
+        Field("VendorName", "Vendor Name", false, "Supplier Name", "Sup Name", "Supplier"),
+        Field("InvoiceNumber", "Invoice Number", false, "Invoice No", "Invo No", "Inv No"),
+        Field("InvoiceDate", "Invoice Date", false, "Inv Date"),
+        Field("BinLocation", "Bin Location", false, "Bin", "Bin Loc"),
+        Field("ManufacturingDate", "Manufacturing Date", false, "Mfg Date", "MFD", "MFD Date"),
+        Field("ExpiryDate", "Expiry Date", false, "Exp Date", "Expiration Date"),
+        Field("ExpectedLabelCount", "Expected Label Count", false, "No of Labels to print", "Labels to Print", "Label Count", "No of Labels")
+    ];
+
+    private static ImportFieldDefinition Field(string key, string label, bool required, params string[] aliases) =>
+        new(key, label, required, new[] { key, label }.Concat(aliases).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+
+    private static IReadOnlyDictionary<string, string> BuildAliases(IEnumerable<ImportFieldDefinition> definitions)
     {
         var aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        void Add(string field, params string[] names)
-        {
-            aliases[NormalizeHeader(field)] = field;
-            foreach (var name in names) aliases[NormalizeHeader(name)] = field;
-        }
-
-        Add("GRNNumber", "GRN No", "GR No", "GR Number", "Goods Receipt No", "Goods Receipt Number");
-        Add("GRNDate", "GRN Date", "GR Date", "Gr date", "Goods Receipt Date");
-        Add("SAPLineItemNumber", "Line Item", "Item", "Item No", "SAP Line Item");
-        Add("MaterialNumber", "Material", "Material No", "Material Code", "Part No", "Part Number", "Parts Number");
-        Add("MaterialDescription", "Material Description", "Material Desc", "Description", "Part Description");
-        Add("ReceivedQuantity", "Quantity", "Qty", "Received Qty", "GR Quantity");
-        Add("PackingStandard", "Pack Qty", "Packing Qty", "Pack Quantity", "Packing Standard", "Standard Pack Qty");
-        Add("BatchNumber", "Batch", "Batch No", "Lot", "Lot No");
-        Add("UOM", "Unit", "Unit of Measure");
-        Add("Plant", "Plant Code");
-        Add("StorageLocation", "Storage Location", "Storage Loc", "SLoc");
-        Add("PurchaseOrder", "PO", "PO Number", "Purchase Order", "Purchase Order No");
-        Add("VendorCode", "Vendor", "Vendor Code", "SAP Vendor Code", "Supplier Code");
-        Add("VendorName", "Vendor Name", "Supplier Name", "Sup Name", "Supplier");
-        Add("InvoiceNumber", "Invoice No", "Invoice Number", "Invo No", "Inv No");
-        Add("InvoiceDate", "Invoice Date", "Inv Date");
-        Add("BinLocation", "Bin", "Bin Loc", "Bin Location");
-        Add("ManufacturingDate", "Mfg Date", "Manufacturing Date", "MFD", "MFD Date");
-        Add("ExpiryDate", "Exp Date", "Expiry Date", "Expiration Date");
-        Add("ExpectedLabelCount", "No of Labels to print", "Labels to Print", "Label Count", "No of Labels");
+        foreach (var field in definitions)
+            foreach (var alias in field.Aliases) aliases[NormalizeHeader(alias)] = field.Key;
         return aliases;
     }
-
-    private static string NormalizeHeader(string value) => new(value
-        .Where(char.IsLetterOrDigit)
-        .Select(char.ToLowerInvariant)
-        .ToArray());
 
     private static DateOnly? ParseNullableDate(string? value)
     {
@@ -232,12 +171,10 @@ public static class ImportFileParser
         string[] formats =
         [
             "dd.MM.yyyy", "d.M.yyyy", "dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy", "d-M-yyyy",
-            "yyyy-MM-dd", "yyyy/MM/dd", "MM/dd/yyyy", "M/d/yyyy", "dd.MM.yy", "d.M.yy"
+            "yyyy-MM-dd", "yyyy-MM-dd HH:mm:ss", "yyyy/MM/dd", "MM/dd/yyyy", "M/d/yyyy", "dd.MM.yy", "d.M.yy"
         ];
-        if (DateOnly.TryParseExact(trimmed, formats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var exact))
-            return exact;
-        if (DateOnly.TryParse(trimmed, CultureInfo.GetCultureInfo("en-IN"), DateTimeStyles.AllowWhiteSpaces, out var indian))
-            return indian;
+        if (DateOnly.TryParseExact(trimmed, formats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var exact)) return exact;
+        if (DateOnly.TryParse(trimmed, CultureInfo.GetCultureInfo("en-IN"), DateTimeStyles.AllowWhiteSpaces, out var indian)) return indian;
         return null;
     }
 
@@ -245,95 +182,13 @@ public static class ImportFileParser
     {
         if (string.IsNullOrWhiteSpace(value)) return 0;
         var trimmed = value.Trim().Replace("\u00a0", string.Empty).Replace(" ", string.Empty);
-        if (decimal.TryParse(trimmed, NumberStyles.Number | NumberStyles.AllowExponent, CultureInfo.InvariantCulture, out var number))
-            return number;
-        if (decimal.TryParse(trimmed, NumberStyles.Number | NumberStyles.AllowExponent, CultureInfo.GetCultureInfo("en-IN"), out number))
-            return number;
+        if (decimal.TryParse(trimmed, NumberStyles.Number | NumberStyles.AllowExponent, CultureInfo.InvariantCulture, out var number)) return number;
+        if (decimal.TryParse(trimmed, NumberStyles.Number | NumberStyles.AllowExponent, CultureInfo.GetCultureInfo("en-IN"), out number)) return number;
         return 0;
     }
-
-    private static string DecodeText(byte[] bytes)
-    {
-        using var reader = new StreamReader(new MemoryStream(bytes), new UTF8Encoding(false, false), true);
-        return reader.ReadToEnd().TrimStart('\uFEFF');
-    }
-
-    private static char DetectDelimiter(string text)
-    {
-        var firstRecord = text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
-        var candidates = new[] { '\t', ',', ';', '|' };
-        var detected = candidates.Select(delimiter => new { Delimiter = delimiter, Count = CountOutsideQuotes(firstRecord, delimiter) })
-            .OrderByDescending(x => x.Count).First();
-        if (detected.Count == 0) throw new InvalidDataException("Could not detect a tab, comma, semicolon or pipe delimiter.");
-        return detected.Delimiter;
-    }
-
-    private static int CountOutsideQuotes(string value, char delimiter)
-    {
-        var count = 0;
-        var quoted = false;
-        for (var index = 0; index < value.Length; index++)
-        {
-            if (value[index] == '"')
-            {
-                if (quoted && index + 1 < value.Length && value[index + 1] == '"') index++;
-                else quoted = !quoted;
-            }
-            else if (!quoted && value[index] == delimiter) count++;
-        }
-        return count;
-    }
-
-    private static List<List<string>> ReadDelimitedRows(string text, char delimiter)
-    {
-        var rows = new List<List<string>>();
-        var row = new List<string>();
-        var field = new StringBuilder();
-        var quoted = false;
-
-        for (var index = 0; index < text.Length; index++)
-        {
-            var character = text[index];
-            if (character == '"')
-            {
-                if (quoted && index + 1 < text.Length && text[index + 1] == '"')
-                {
-                    field.Append('"');
-                    index++;
-                }
-                else
-                {
-                    quoted = !quoted;
-                }
-                continue;
-            }
-
-            if (!quoted && character == delimiter)
-            {
-                row.Add(field.ToString());
-                field.Clear();
-                continue;
-            }
-
-            if (!quoted && (character == '\r' || character == '\n'))
-            {
-                if (character == '\r' && index + 1 < text.Length && text[index + 1] == '\n') index++;
-                row.Add(field.ToString());
-                field.Clear();
-                if (row.Any(value => !string.IsNullOrWhiteSpace(value))) rows.Add(row);
-                row = [];
-                continue;
-            }
-
-            field.Append(character);
-        }
-
-        if (quoted) throw new InvalidDataException("Delimited file contains an unterminated quoted field.");
-        row.Add(field.ToString());
-        if (row.Any(value => !string.IsNullOrWhiteSpace(value))) rows.Add(row);
-        return rows;
-    }
 }
+
+public sealed record ImportFieldDefinition(string Key, string Label, bool Required, IReadOnlyList<string> Aliases);
 
 public sealed record NormalizedImportRow(
     int ExcelRowNumber,
