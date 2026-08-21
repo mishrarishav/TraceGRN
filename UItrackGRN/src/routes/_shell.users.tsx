@@ -220,10 +220,6 @@ function UsersPage() {
             className="space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!editing && (form.password?.length ?? 0) < 12) {
-                toast.error("Password must contain at least 12 characters");
-                return;
-              }
               save.mutate();
             }}
           >
@@ -259,7 +255,6 @@ function UsersPage() {
                   <Input
                     aria-label="Password"
                     required
-                    minLength={12}
                     type="password"
                     autoComplete="new-password"
                     value={form.password}
@@ -326,10 +321,6 @@ function UsersPage() {
             className="space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
-              if (newPassword.length < 12) {
-                toast.error("Password must contain at least 12 characters");
-                return;
-              }
               if (newPassword !== confirmPassword) {
                 toast.error("Password confirmation does not match");
                 return;
@@ -341,7 +332,6 @@ function UsersPage() {
               <Input
                 aria-label="New password"
                 required
-                minLength={12}
                 type="password"
                 autoComplete="new-password"
                 value={newPassword}
@@ -352,7 +342,6 @@ function UsersPage() {
               <Input
                 aria-label="Confirm new password"
                 required
-                minLength={12}
                 type="password"
                 autoComplete="new-password"
                 value={confirmPassword}

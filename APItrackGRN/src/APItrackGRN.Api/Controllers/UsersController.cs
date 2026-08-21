@@ -40,7 +40,7 @@ public sealed class UsersController(TrackGrnDbContext dbContext, IAuditWriter au
         var user = new User
         {
             Username = username, FullName = request.Name.Trim(), EmployeeCode = employeeCode,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password!, workFactor: 12),
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password ?? string.Empty, workFactor: 12),
             RoleId = role.Id, IsActive = request.IsActive
         };
         dbContext.Users.Add(user);
@@ -78,8 +78,6 @@ public sealed class UsersController(TrackGrnDbContext dbContext, IAuditWriter au
         CancellationToken cancellationToken)
     {
         var errors = new Dictionary<string, string[]>();
-        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 12)
-            errors["newPassword"] = ["Password must contain at least 12 characters."];
         if (!string.Equals(request.NewPassword, request.ConfirmPassword, StringComparison.Ordinal))
             errors["confirmPassword"] = ["Password confirmation does not match."];
         if (errors.Count > 0) return ValidationProblem(errors);
@@ -87,7 +85,7 @@ public sealed class UsersController(TrackGrnDbContext dbContext, IAuditWriter au
         var user = await dbContext.Users.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (user is null) return NotFound();
 
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword, workFactor: 12);
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword ?? string.Empty, workFactor: 12);
         var now = DateTimeOffset.UtcNow;
         var activeRefreshTokens = await dbContext.RefreshTokens
             .Where(x => x.UserId == id && x.RevokedAt == null)
@@ -123,8 +121,7 @@ public sealed class UsersController(TrackGrnDbContext dbContext, IAuditWriter au
         if (string.IsNullOrWhiteSpace(request.EmployeeCode)) errors["employeeCode"] = ["Employee code is required."];
         if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Trim().Length < 3) errors["username"] = ["Username must contain at least 3 characters."];
         if (string.IsNullOrWhiteSpace(request.Role)) errors["role"] = ["Role is required."];
-        if (requirePassword && (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 12)) errors["password"] = ["Password must contain at least 12 characters."];
-        if (requirePassword && !string.IsNullOrWhiteSpace(request.Password) && request.Password.Length < 12) errors["password"] = ["Password must contain at least 12 characters."];
+        if (requirePassword && request.Password is null) errors["password"] = ["Password is required."];
         return errors.Count == 0 ? null : errors;
     }
 }

@@ -30,15 +30,15 @@ public sealed class UsersControllerTests
         var controller = new UsersController(db, audit);
 
         var result = await controller.ResetPassword(user.Id,
-            new ResetPasswordRequest("New-Password-2026!", "New-Password-2026!"), CancellationToken.None);
+            new ResetPasswordRequest("1", "1"), CancellationToken.None);
 
         Assert.IsType<OkObjectResult>(result);
-        Assert.True(BCrypt.Net.BCrypt.Verify("New-Password-2026!", user.PasswordHash));
+        Assert.True(BCrypt.Net.BCrypt.Verify("1", user.PasswordHash));
         Assert.False(BCrypt.Net.BCrypt.Verify("Old-Password-2026!", user.PasswordHash));
         Assert.All(await db.RefreshTokens.Where(x => x.TokenHash == "active").ToListAsync(),
             token => Assert.NotNull(token.RevokedAt));
         Assert.Equal("UserPasswordReset", audit.Action);
-        Assert.DoesNotContain("New-Password-2026!", audit.SerializedValues, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"1\"", audit.SerializedValues, StringComparison.Ordinal);
     }
 
     private sealed class RecordingAuditWriter : IAuditWriter
