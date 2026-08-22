@@ -1,0 +1,53 @@
+name: Validate TrackGRN pull request
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: UItrackGRN/package-lock.json
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: UItrackGRN
+
+      - name: Build UI
+        run: npm run build
+        working-directory: UItrackGRN
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore backend tests
+        run: dotnet restore APItrackGRN/tests/APItrackGRN.Tests/APItrackGRN.Tests.csproj
+
+      - name: Run non-destructive backend tests
+        run: >-
+          dotnet test APItrackGRN/tests/APItrackGRN.Tests/APItrackGRN.Tests.csproj
+          --configuration Release
+          --no-restore
+          --filter "FullyQualifiedName!~APItrackGRN.Tests.SqlEndToEndTests"
