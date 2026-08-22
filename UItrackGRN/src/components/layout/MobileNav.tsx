@@ -48,9 +48,12 @@ export function MobileNav() {
             <Menu className="h-5 w-5" />
             Menu
           </SheetTrigger>
-          <SheetContent side="right" className="w-72 bg-sidebar p-0">
+          <SheetContent
+            side="right"
+            className="flex h-dvh min-h-0 w-72 flex-col overflow-hidden bg-sidebar p-0"
+          >
             <SheetTitle className="sr-only">Menu</SheetTitle>
-            <div className="flex h-16 items-center border-b border-sidebar-border px-4">
+            <div className="flex h-16 shrink-0 items-center border-b border-sidebar-border px-4">
               <BrandMark />
             </div>
             <SidebarNav onNavigate={() => setOpen(false)} />

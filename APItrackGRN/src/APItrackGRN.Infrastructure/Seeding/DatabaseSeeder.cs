@@ -63,12 +63,7 @@ public sealed class DatabaseSeeder(
             return existing;
         }
 
-        var password = configuration["Seed:AdminPassword"];
-        if (string.IsNullOrWhiteSpace(password) || password.Length < 12)
-        {
-            throw new InvalidOperationException(
-                "Seed:AdminPassword must be configured with at least 12 characters before running --seed.");
-        }
+        var password = configuration["Seed:AdminPassword"] ?? string.Empty;
 
         var admin = new User
         {

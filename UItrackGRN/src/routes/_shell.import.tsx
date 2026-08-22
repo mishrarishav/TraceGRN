@@ -1,8 +1,19 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { CheckCircle2, FileSpreadsheet, Loader2, Sparkles, Upload, X } from "lucide-react";
+import {
+  ArrowRight,
+  BrainCircuit,
+  CheckCircle2,
+  FileSpreadsheet,
+  Loader2,
+  Save,
+  Sparkles,
+  TableProperties,
+  Upload,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/PageHeader";
 import { StatusBadge } from "@/components/common/StatusBadge";
@@ -11,6 +22,8 @@ import { DataTable, type Column } from "@/components/common/DataTable";
 import { ExportButton } from "@/components/common/ExportButton";
 import { ConfirmationDialog } from "@/components/common/ConfirmationDialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import {
   Select,
@@ -20,62 +33,155 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { commitGRNImport, getImportOptions, previewGRNImport } from "@/services/api";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  commitGRNImport,
+  getImportOptions,
+  inspectGRNImport,
+  previewGRNImport,
+  saveImportProfile,
+  type ImportFieldDefinition,
+  type ImportInspection,
+  type ImportDuplicateAction,
+} from "@/services/api";
 import type { ImportBatch, ImportRowResult } from "@/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_shell/import")({
   head: () => ({
     meta: [
-      { title: "SAP GRN Import — TrackGRN" },
+      { title: "Smart GRN Import — TrackGRN" },
       {
         name: "description",
         content:
-          "Upload SAP GRN Excel, CSV or TSV extracts, validate rows and commit material records.",
+          "Inspect any supported Excel workbook, learn its sheet and column mapping, validate and import GRN data.",
       },
-      { property: "og:title", content: "SAP GRN Import — TrackGRN" },
-      { property: "og:description", content: "Validate and commit SAP GRN Excel extracts." },
     ],
   }),
   component: ImportPage,
 });
 
-const steps = ["Upload File", "Validate & Preview", "Commit"];
+const steps = ["Upload", "Map Workbook", "Validate", "Commit"];
+const ignoredField = "__ignore__";
 
 function ImportPage() {
   const [step, setStep] = useState(0);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [template, setTemplate] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [inspection, setInspection] = useState<ImportInspection | null>(null);
+  const [sheetName, setSheetName] = useState("");
+  const [headerRow, setHeaderRow] = useState(1);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [profileName, setProfileName] = useState("");
+  const [savedProfileId, setSavedProfileId] = useState<string | undefined>();
   const [progress, setProgress] = useState(0);
   const [confirm, setConfirm] = useState(false);
   const [committed, setCommitted] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [rows, setRows] = useState<ImportRowResult[]>([]);
   const [previewBatch, setPreviewBatch] = useState<ImportBatch | null>(null);
+  const [duplicateDecisions, setDuplicateDecisions] = useState<
+    Record<string, ImportDuplicateAction>
+  >({});
+  const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
+  const [duplicateIndex, setDuplicateIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const { data: options } = useQuery({ queryKey: ["import-options"], queryFn: getImportOptions });
-  const activeTemplate =
-    template || options?.mappingTemplates.find((item) => item.isDefault)?.id || "";
 
-  const upload = useMutation({
-    mutationFn: (file: File) => previewGRNImport(file, activeTemplate || undefined),
+  const selectedSheet = inspection?.sheets.find((sheet) => sheet.name === sheetName) ?? null;
+  const headers = selectedSheet?.rows[headerRow - 1] ?? [];
+  const mappedTargets = new Set(Object.values(mapping));
+  const requiredFields = inspection?.fields.filter((field) => field.required) ?? [];
+  const missingRequired = requiredFields.filter((field) => !mappedTargets.has(field.key));
+  const readyToValidate = Boolean(file && selectedSheet && missingRequired.length === 0);
+
+  const inspect = useMutation({
+    mutationFn: inspectGRNImport,
+    onSuccess: (response) => {
+      setInspection(response);
+      setSheetName(response.selectedSheetName);
+      setHeaderRow(response.selectedHeaderRow);
+      setMapping(response.mapping);
+      setSavedProfileId(response.matchedTemplate?.id);
+      setProfileName(response.matchedTemplate?.name ?? profileNameFromFile(response.fileName));
+      setProgress(100);
+      setStep(1);
+      toast.success(response.matchedTemplate ? "Saved format recognized" : "Workbook inspected", {
+        description: response.matchedTemplate
+          ? `${response.matchedTemplate.name} matched at ${response.matchedTemplate.confidence}% confidence.`
+          : `${response.sheets.length} sheet${response.sheets.length === 1 ? "" : "s"} ready to preview and map.`,
+      });
+    },
+    onError: (error) => {
+      setProgress(0);
+      toast.error("Workbook inspection failed", { description: error.message });
+    },
+  });
+
+  const saveProfile = useMutation({
+    mutationFn: () =>
+      saveImportProfile({
+        templateId: savedProfileId,
+        name: profileName.trim(),
+        fileName: file!.name,
+        sheetName,
+        headerRowNumber: headerRow,
+        mapping,
+        headers,
+      }),
+    onSuccess: (response) => {
+      setSavedProfileId(response.id);
+      setMapping(response.mapping);
+      toast.success("Import format saved", {
+        description:
+          "This sheet and all learned column names will be picked automatically next time.",
+      });
+    },
+    onError: (error) => toast.error("Unable to save import format", { description: error.message }),
+  });
+
+  const validate = useMutation({
+    mutationFn: () => {
+      const defaultTemplate = options?.mappingTemplates.find((item) => item.isDefault)?.id;
+      return previewGRNImport(
+        file!,
+        savedProfileId ?? inspection?.matchedTemplate?.id ?? defaultTemplate,
+        { sheetName, headerRowNumber: headerRow, mapping },
+        Boolean(previewBatch),
+      );
+    },
     onSuccess: (response) => {
       setRows(response.rows);
       setPreviewBatch(response.batch);
-      setProgress(100);
-      setStep(1);
-      toast.success("File parsed", {
-        description: `${response.batch.totalRows} rows validated against SQL data.`,
+      setDuplicateDecisions({});
+      setDuplicateIndex(0);
+      setStep(2);
+      const duplicateCount = response.rows.filter((row) => row.requiresDuplicateDecision).length;
+      setDuplicateDialogOpen(duplicateCount > 0);
+      toast.success("Selected sheet validated", {
+        description:
+          duplicateCount > 0
+            ? `${response.batch.totalRows} rows checked; ${duplicateCount} existing row${duplicateCount === 1 ? " needs" : "s need"} your decision.`
+            : `${response.batch.totalRows} rows checked against SQL data.`,
       });
     },
     onError: (error) => toast.error("Import validation failed", { description: error.message }),
   });
 
   const commit = useMutation({
-    mutationFn: (batchId: string) => commitGRNImport(batchId),
+    mutationFn: (batchId: string) =>
+      commitGRNImport(
+        batchId,
+        Object.entries(duplicateDecisions).map(([rowId, action]) => ({ rowId, action })),
+      ),
     onSuccess: (response) => {
       setCommitted(true);
-      setStep(2);
+      setStep(3);
       setConfirm(false);
       toast.success("Import committed", {
         description: `Batch ${response.batchId} · ${response.applied} rows applied to SQL Server`,
@@ -84,137 +190,251 @@ function ImportPage() {
     onError: (error) => toast.error("Commit failed", { description: error.message }),
   });
 
-  const handleFile = (file?: File) => {
-    if (!file) return;
-    if (!/[.](xlsx|csv|tsv|txt)$/i.test(file.name)) {
-      toast.error("Only .xlsx, .csv, .tsv and .txt files are supported");
+  const handleFile = (nextFile?: File) => {
+    if (!nextFile) return;
+    if (!/[.](xls|xlsx|xlsm|xlsb|xltx|xltm|csv|tsv|txt)$/i.test(nextFile.name)) {
+      toast.error("Select an Excel, CSV, TSV or TXT file");
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
+    if (nextFile.size > 10 * 1024 * 1024) {
       toast.error("File exceeds the 10 MB limit");
       return;
     }
-
-    setFileName(file.name);
-    setProgress(0);
-    setProgress(15);
-    upload.mutate(file);
+    resetImport(false);
+    setFile(nextFile);
+    setProgress(20);
+    inspect.mutate(nextFile);
   };
 
-  const counts = {
-    new: rows.filter((r) => r.status === "New").length,
-    updated: rows.filter((r) => r.status === "Updated").length,
-    unchanged: rows.filter((r) => r.status === "Unchanged").length,
-    warning: rows.filter((r) => r.status === "Warning").length,
-    rejected: rows.filter((r) => r.status === "Rejected").length,
+  const resetImport = (clearInput = true) => {
+    setStep(0);
+    setFile(null);
+    setInspection(null);
+    setSheetName("");
+    setHeaderRow(1);
+    setMapping({});
+    setProfileName("");
+    setSavedProfileId(undefined);
+    setProgress(0);
+    setRows([]);
+    setPreviewBatch(null);
+    setDuplicateDecisions({});
+    setDuplicateDialogOpen(false);
+    setDuplicateIndex(0);
+    setCommitted(false);
+    if (clearInput && inputRef.current) inputRef.current.value = "";
+  };
+
+  const chooseSheet = (name: string) => {
+    if (!inspection) return;
+    const sheet = inspection.sheets.find((item) => item.name === name);
+    if (!sheet) return;
+    const candidate = bestHeader(sheet.rows, inspection.fields);
+    setSheetName(name);
+    setHeaderRow(candidate.rowNumber);
+    setMapping(candidate.mapping);
+    setSavedProfileId(undefined);
+  };
+
+  const chooseHeaderRow = (rowNumber: number) => {
+    if (!inspection || !selectedSheet) return;
+    const nextHeaders = selectedSheet.rows[rowNumber - 1] ?? [];
+    setHeaderRow(rowNumber);
+    setMapping(suggestMapping(nextHeaders, inspection.fields));
+    setSavedProfileId(undefined);
+  };
+
+  const updateColumnMapping = (sourceHeader: string, targetField: string) => {
+    setMapping((current) => {
+      const next = { ...current };
+      delete next[sourceHeader];
+      if (targetField !== ignoredField) {
+        for (const [source, target] of Object.entries(next)) {
+          if (target === targetField) delete next[source];
+        }
+        next[sourceHeader] = targetField;
+      }
+      return next;
+    });
+    setSavedProfileId(undefined);
+  };
+
+  const counts = useMemo(
+    () => ({
+      new: rows.filter((row) => row.status === "New").length,
+      updated: rows.filter((row) => row.status === "Updated").length,
+      unchanged: rows.filter((row) => row.status === "Unchanged").length,
+      warning: rows.filter((row) => row.status === "Warning").length,
+      rejected: rows.filter((row) => row.status === "Rejected").length,
+    }),
+    [rows],
+  );
+
+  const duplicateRows = useMemo(() => rows.filter((row) => row.requiresDuplicateDecision), [rows]);
+  const unresolvedDuplicates = duplicateRows.filter((row) => !duplicateDecisions[row.id]);
+  const skippedDuplicates = duplicateRows.filter(
+    (row) => duplicateDecisions[row.id] === "Skip",
+  ).length;
+  const proceededDuplicates = duplicateRows.filter(
+    (row) => duplicateDecisions[row.id] === "Proceed",
+  ).length;
+  const currentDuplicate = duplicateRows[duplicateIndex];
+
+  const openDuplicateResolver = (rowId?: string) => {
+    const index = rowId
+      ? duplicateRows.findIndex((row) => row.id === rowId)
+      : duplicateRows.findIndex((row) => !duplicateDecisions[row.id]);
+    setDuplicateIndex(index >= 0 ? index : 0);
+    setDuplicateDialogOpen(duplicateRows.length > 0);
+  };
+
+  const decideDuplicate = (action: ImportDuplicateAction, applyToAll: boolean) => {
+    if (!currentDuplicate) return;
+    const next = { ...duplicateDecisions };
+    if (applyToAll) {
+      duplicateRows.forEach((row) => {
+        if (!next[row.id]) next[row.id] = action;
+      });
+    } else {
+      next[currentDuplicate.id] = action;
+    }
+    setDuplicateDecisions(next);
+    const nextIndex = duplicateRows.findIndex((row) => !next[row.id]);
+    if (nextIndex < 0) {
+      setDuplicateDialogOpen(false);
+    } else {
+      setDuplicateIndex(nextIndex);
+    }
+  };
+
+  const requestCommit = () => {
+    if (unresolvedDuplicates.length > 0) {
+      openDuplicateResolver();
+      return;
+    }
+    setConfirm(true);
   };
 
   const columns: Column<ImportRowResult>[] = [
     {
       key: "grn",
       header: "GRN No",
-      render: (r) => <span className="num font-medium">{r.grnNumber}</span>,
+      render: (row) => <span className="num font-medium">{row.grnNumber}</span>,
     },
-    { key: "line", header: "Line", render: (r) => <span className="num">{r.lineItem}</span> },
+    {
+      key: "excel-row",
+      header: "Excel Row",
+      render: (row) => <span className="num">{row.excelRowNumber ?? "—"}</span>,
+    },
+    { key: "line", header: "Line", render: (row) => <span className="num">{row.lineItem}</span> },
     {
       key: "mat",
       header: "Material",
-      render: (r) => <span className="num">{r.materialNumber}</span>,
+      render: (row) => <span className="num">{row.materialNumber}</span>,
     },
     {
       key: "desc",
       header: "Description",
-      render: (r) => r.description,
+      render: (row) => row.description,
       className: "max-w-[240px] truncate",
     },
     {
       key: "qty",
       header: "Quantity",
-      sortValue: (r) => r.quantity,
-      render: (r) => (
+      sortValue: (row) => row.quantity,
+      render: (row) => (
         <span className="num">
-          {r.previousQuantity !== undefined ? (
-            <>
-              <span className="text-muted-foreground line-through">{r.previousQuantity}</span>{" "}
-              <span className="font-semibold text-info">{r.quantity}</span>
-            </>
-          ) : (
-            `${r.quantity.toLocaleString()} ${r.uom ?? ""}`
-          )}
+          {row.quantity.toLocaleString()} {row.uom ?? ""}
         </span>
       ),
     },
     {
       key: "pack",
-      header: "Pack Std",
-      render: (r) => <span className="num">{r.packingStandard}</span>,
+      header: "Pack Qty",
+      render: (row) => <span className="num">{row.packingStandard}</span>,
     },
-    { key: "batch", header: "Batch", render: (r) => <span className="num">{r.batch}</span> },
+    { key: "batch", header: "Batch", render: (row) => <span className="num">{row.batch}</span> },
     {
       key: "source",
       header: "Vendor / Invoice / Bin",
-      render: (r) => (
+      className: "min-w-[190px]",
+      render: (row) => (
         <div className="space-y-0.5 text-xs">
-          <p>{r.vendorCode ? `${r.vendorCode} · ${r.vendorName ?? ""}` : "—"}</p>
+          <p>{row.vendorCode ? `${row.vendorCode} · ${row.vendorName ?? ""}` : "—"}</p>
           <p className="text-muted-foreground">
-            {[r.invoiceNumber, r.binLocation ? `Bin ${r.binLocation}` : ""]
+            {[row.invoiceNumber, row.binLocation ? `Bin ${row.binLocation}` : ""]
               .filter(Boolean)
               .join(" · ") || "—"}
           </p>
         </div>
       ),
-      className: "min-w-[190px]",
     },
+    { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} /> },
     {
-      key: "labels",
-      header: "Labels",
-      render: (r) => (
-        <span className="num">
-          {r.expectedLabelCount ?? Math.ceil(r.quantity / Math.max(1, r.packingStandard))}
-        </span>
-      ),
+      key: "decision",
+      header: "Duplicate Decision",
+      className: "min-w-[150px]",
+      render: (row) => {
+        if (!row.requiresDuplicateDecision) {
+          return <span className="text-xs text-muted-foreground">Not required</span>;
+        }
+        const decision = duplicateDecisions[row.id];
+        return (
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn(
+              "h-8",
+              decision === "Proceed" && "border-success/40 text-success",
+              decision === "Skip" && "border-warning/40 text-warning",
+            )}
+            onClick={() => openDuplicateResolver(row.id)}
+          >
+            {decision ?? "Resolve"}
+          </Button>
+        );
+      },
     },
-    { key: "status", header: "Status", render: (r) => <StatusBadge status={r.status} /> },
     {
       key: "reason",
       header: "Remark",
-      render: (r) => <span className="text-xs text-muted-foreground">{r.reason ?? "—"}</span>,
+      render: (row) => <span className="text-xs text-muted-foreground">{row.reason ?? "—"}</span>,
     },
   ];
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="SAP GRN Import"
-        description="Upload Excel, CSV or tab-separated GRN data; columns are auto-mapped before SQL commit."
+        title="Smart GRN Import"
+        description="Preview every worksheet, teach TrackGRN a format once, then import matching files directly."
         icon={<Upload className="h-5 w-5" />}
         actions={<ExportButton name="import-preview" />}
       />
 
       <div className="panel flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
-        {steps.map((s, i) => (
-          <div key={s} className="flex flex-1 items-center gap-3">
+        {steps.map((label, index) => (
+          <div key={label} className="flex flex-1 items-center gap-3">
             <span
               className={cn(
                 "num flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold",
-                i < step
+                index < step
                   ? "border-success bg-success/15 text-success"
-                  : i === step
+                  : index === step
                     ? "border-primary bg-primary text-primary-foreground"
                     : "border-border text-muted-foreground",
               )}
             >
-              {i < step ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
+              {index < step ? <CheckCircle2 className="h-4 w-4" /> : index + 1}
             </span>
             <span
               className={cn(
                 "text-sm font-medium",
-                i === step ? "text-foreground" : "text-muted-foreground",
+                index === step ? "text-foreground" : "text-muted-foreground",
               )}
             >
-              {s}
+              {label}
             </span>
-            {i < steps.length - 1 ? (
+            {index < steps.length - 1 ? (
               <span className="hidden h-px flex-1 bg-border sm:block" />
             ) : null}
           </div>
@@ -225,15 +445,15 @@ function ImportPage() {
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="panel p-5 lg:col-span-2">
             <div
-              onDragOver={(e) => {
-                e.preventDefault();
+              onDragOver={(event) => {
+                event.preventDefault();
                 setDragging(true);
               }}
               onDragLeave={() => setDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault();
+              onDrop={(event) => {
+                event.preventDefault();
                 setDragging(false);
-                handleFile(e.dataTransfer.files[0]);
+                handleFile(event.dataTransfer.files[0]);
               }}
               className={cn(
                 "flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 text-center transition-colors",
@@ -243,28 +463,28 @@ function ImportPage() {
               <span className="brand-gradient flex h-14 w-14 items-center justify-center rounded-2xl text-primary-foreground">
                 <FileSpreadsheet className="h-7 w-7" />
               </span>
-              <h3 className="mt-4 font-semibold">Drop your SAP GRN file here</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Supports .xlsx, .csv, .tsv and .txt up to 10 MB
+              <h3 className="mt-4 font-semibold">Drop the GRN workbook here</h3>
+              <p className="mt-1 max-w-lg text-sm text-muted-foreground">
+                Excel 97–2026 formats (.xls, .xlsx, .xlsm, .xlsb), templates, CSV, TSV and TXT · up
+                to 10 MB
               </p>
               <Button
                 className="mt-5"
                 onClick={() => inputRef.current?.click()}
-                disabled={upload.isPending}
+                disabled={inspect.isPending}
               >
-                {upload.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} Browse
-                Files
+                {inspect.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}{" "}
+                Browse File
               </Button>
               <input
                 ref={inputRef}
                 type="file"
-                accept=".xlsx,.csv,.tsv,.txt"
+                accept=".xls,.xlsx,.xlsm,.xlsb,.xltx,.xltm,.csv,.tsv,.txt"
                 className="hidden"
-                onChange={(e) => handleFile(e.target.files?.[0])}
+                onChange={(event) => handleFile(event.target.files?.[0])}
               />
             </div>
-
-            {fileName ? (
+            {file ? (
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -272,76 +492,254 @@ function ImportPage() {
               >
                 <FileSpreadsheet className="h-5 w-5 text-success" />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{fileName}</p>
+                  <p className="truncate text-sm font-medium">{file.name}</p>
                   <Progress value={progress} className="mt-2 h-1.5" />
                 </div>
                 <span className="num text-xs text-muted-foreground">{progress}%</span>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
-                  onClick={() => setFileName(null)}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
               </motion.div>
             ) : null}
           </div>
-
           <div className="panel space-y-4 p-5">
+            <BrainCircuit className="h-7 w-7 text-primary" />
             <div>
-              <p className="text-sm font-semibold">Identification Strategy</p>
-              <p className="text-xs text-muted-foreground">
-                Determines how duplicate SAP rows are matched.
+              <p className="font-semibold">Format memory</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                TrackGRN remembers the chosen worksheet, header row and every column alias you save.
               </p>
             </div>
-            <Select value={options?.identificationStrategy.id ?? "loading"} disabled>
-              <SelectTrigger aria-label="Identification strategy">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={options?.identificationStrategy.id ?? "loading"}>
-                  {options?.identificationStrategy.name ?? "Loading active strategy…"}
-                </SelectItem>
-              </SelectContent>
-            </Select>
             <div className="rounded-lg border border-border bg-surface p-3 text-xs">
-              <p className="font-medium">Matching fields</p>
+              <p className="font-medium">Active identity</p>
               <p className="num mt-1 text-muted-foreground">
-                {options?.identificationStrategy.selectedFields.join(" + ") ?? "—"}
+                {options?.identificationStrategy.selectedFields.join(" + ") ?? "Loading…"}
               </p>
-            </div>
-            <div>
-              <p className="text-sm font-semibold">Column Mapping Template</p>
-              <Select value={activeTemplate} onValueChange={setTemplate}>
-                <SelectTrigger className="mt-2" aria-label="Mapping template">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {options?.mappingTemplates.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
           </div>
         </div>
       ) : null}
 
-      {step >= 1 ? (
+      {step === 1 && inspection && selectedSheet ? (
+        <div className="space-y-4">
+          <div className="panel p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <TableProperties className="h-5 w-5 text-primary" />
+                  <h2 className="font-semibold">Workbook preview</h2>
+                  {inspection.matchedTemplate ? (
+                    <span className="rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
+                      {inspection.matchedTemplate.name} · {inspection.matchedTemplate.confidence}%
+                      match
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Choose the one sheet and the row containing its column names.
+                </p>
+              </div>
+              <Button variant="outline" size="sm" className="gap-2" onClick={() => resetImport()}>
+                <X className="h-4 w-4" /> Change file
+              </Button>
+            </div>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="space-y-2">
+                <Label>Worksheet</Label>
+                <Select value={sheetName} onValueChange={chooseSheet}>
+                  <SelectTrigger aria-label="Worksheet">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {inspection.sheets.map((sheet) => (
+                      <SelectItem key={sheet.name} value={sheet.name}>
+                        {sheet.name} · {sheet.rowCount} rows
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Header row</Label>
+                <Select
+                  value={String(headerRow)}
+                  onValueChange={(value) => chooseHeaderRow(Number(value))}
+                >
+                  <SelectTrigger aria-label="Header row">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Array.from({ length: Math.min(25, selectedSheet.rows.length) }, (_, index) => (
+                      <SelectItem key={index + 1} value={String(index + 1)}>
+                        Row {index + 1}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="rounded-lg border border-border bg-surface p-3 text-sm">
+                <p className="text-xs text-muted-foreground">Sheet size</p>
+                <p className="num mt-1 font-medium">
+                  {selectedSheet.rowCount.toLocaleString()} ×{" "}
+                  {selectedSheet.columnCount.toLocaleString()}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface p-3 text-sm">
+                <p className="text-xs text-muted-foreground">Required mapping</p>
+                <p
+                  className={cn(
+                    "num mt-1 font-medium",
+                    missingRequired.length === 0 ? "text-success" : "text-warning",
+                  )}
+                >
+                  {requiredFields.length - missingRequired.length}/{requiredFields.length} mapped
+                </p>
+              </div>
+            </div>
+
+            <WorkbookGrid sheet={selectedSheet} headerRow={headerRow} />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
+            <div className="panel p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold">Column mapping</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Map each source heading to one TrackGRN field.
+                  </p>
+                </div>
+                {missingRequired.length === 0 ? (
+                  <StatusBadge status="Ready" />
+                ) : (
+                  <StatusBadge status="Warning" />
+                )}
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {headers.map((header, index) =>
+                  header.trim() ? (
+                    <div
+                      key={`${header}-${index}`}
+                      className="grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] items-center gap-2 rounded-lg border border-border bg-surface p-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="num text-[10px] text-muted-foreground">
+                          Column {columnLetter(index + 1)}
+                        </p>
+                        <p className="truncate text-sm font-medium" title={header}>
+                          {header}
+                        </p>
+                      </div>
+                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                      <Select
+                        value={mapping[header] ?? ignoredField}
+                        onValueChange={(value) => updateColumnMapping(header, value)}
+                      >
+                        <SelectTrigger aria-label={`Map ${header}`} className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={ignoredField}>Do not import</SelectItem>
+                          {inspection.fields.map((field) => (
+                            <SelectItem key={field.key} value={field.key}>
+                              {field.label}
+                              {field.required ? " *" : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null,
+                )}
+              </div>
+              {missingRequired.length > 0 ? (
+                <p className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+                  Required: {missingRequired.map((field) => field.label).join(", ")}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="panel h-fit space-y-4 p-5 xl:sticky xl:top-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <BrainCircuit className="h-5 w-5 text-primary" />
+                  <h2 className="font-semibold">Teach this format</h2>
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Saving merges new column names as aliases instead of forgetting the old ones.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="profile-name">Format name</Label>
+                <Input
+                  id="profile-name"
+                  value={profileName}
+                  onChange={(event) => setProfileName(event.target.value)}
+                  maxLength={200}
+                />
+              </div>
+              <Button
+                variant="outline"
+                className="w-full gap-2"
+                disabled={!readyToValidate || !profileName.trim() || saveProfile.isPending}
+                onClick={() => saveProfile.mutate()}
+              >
+                {saveProfile.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}{" "}
+                Save Sheet & Mapping
+              </Button>
+              <Button
+                className="w-full gap-2"
+                disabled={!readyToValidate || validate.isPending}
+                onClick={() => validate.mutate()}
+              >
+                {validate.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}{" "}
+                Validate Selected Sheet
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Validation never writes GRN rows. You review the result before the final commit.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {step >= 2 ? (
         <>
-          <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-5">
+          {previewBatch?.isDuplicateFile ? (
+            <div className="rounded-xl border border-warning/35 bg-warning/10 p-4 text-sm">
+              <p className="font-semibold text-warning">This file has been imported before</p>
+              <p className="mt-1 text-muted-foreground">
+                Review the existing rows below. Proceed updates the database; Skip keeps the current
+                database value.
+              </p>
+            </div>
+          ) : null}
+          <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-6">
             <StatCard label="New Rows" value={counts.new} tone="primary" hint="Will be inserted" />
-            <StatCard
-              label="Updated"
-              value={counts.updated}
-              tone="default"
-              hint="Quantity revised"
-            />
+            <StatCard label="Updated" value={counts.updated} hint="Existing data revised" />
             <StatCard label="Unchanged" value={counts.unchanged} hint="No action" />
-            <StatCard label="Warnings" value={counts.warning} tone="warning" hint="Needs review" />
+            <StatCard
+              label="Duplicates"
+              value={duplicateRows.length}
+              tone={unresolvedDuplicates.length > 0 ? "warning" : "success"}
+              hint={
+                unresolvedDuplicates.length > 0
+                  ? `${unresolvedDuplicates.length} decisions pending`
+                  : "All decisions complete"
+              }
+            />
+            <StatCard
+              label="Warnings"
+              value={counts.warning}
+              tone="warning"
+              hint="Review recommended"
+            />
             <StatCard
               label="Rejected"
               value={counts.rejected}
@@ -349,36 +747,53 @@ function ImportPage() {
               hint="Excluded from commit"
             />
           </div>
-
           <Tabs defaultValue="all">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <TabsList>
                 <TabsTrigger value="all">All Rows</TabsTrigger>
                 <TabsTrigger value="new">New</TabsTrigger>
                 <TabsTrigger value="updated">Updated</TabsTrigger>
+                <TabsTrigger value="duplicates">Duplicates</TabsTrigger>
                 <TabsTrigger value="issues">Warnings & Rejected</TabsTrigger>
               </TabsList>
-              {committed ? (
-                <StatusBadge status="Completed" size="lg" />
-              ) : (
-                <Button onClick={() => setConfirm(true)} className="gap-2">
-                  <Sparkles className="h-4 w-4" /> Commit Import
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setStep(1)}>
+                  Back to Mapping
                 </Button>
-              )}
+                {committed ? (
+                  <StatusBadge status="Completed" size="lg" />
+                ) : (
+                  <Button onClick={requestCommit} className="gap-2" disabled={commit.isPending}>
+                    {commit.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
+                    {unresolvedDuplicates.length > 0
+                      ? `Resolve ${unresolvedDuplicates.length} Duplicate${unresolvedDuplicates.length === 1 ? "" : "s"}`
+                      : "Commit Import"}
+                  </Button>
+                )}
+              </div>
             </div>
-
-            {[
-              ["all", rows],
-              ["new", rows.filter((r) => r.status === "New")],
-              ["updated", rows.filter((r) => r.status === "Updated")],
-              ["issues", rows.filter((r) => r.status === "Warning" || r.status === "Rejected")],
-            ].map(([key, data]) => (
-              <TabsContent key={key as string} value={key as string} className="mt-4">
+            {(
+              [
+                ["all", rows],
+                ["new", rows.filter((row) => row.status === "New")],
+                ["updated", rows.filter((row) => row.status === "Updated")],
+                ["duplicates", duplicateRows],
+                [
+                  "issues",
+                  rows.filter((row) => row.status === "Warning" || row.status === "Rejected"),
+                ],
+              ] as const
+            ).map(([key, data]) => (
+              <TabsContent key={key} value={key} className="mt-4">
                 <DataTable
-                  rows={data as ImportRowResult[]}
+                  rows={[...data]}
                   columns={columns}
-                  searchKeys={(r) =>
-                    `${r.grnNumber} ${r.materialNumber} ${r.description} ${r.batch}`
+                  searchKeys={(row) =>
+                    `${row.grnNumber} ${row.materialNumber} ${row.description} ${row.batch}`
                   }
                   emptyMessage="No rows in this category."
                   dense
@@ -389,14 +804,195 @@ function ImportPage() {
         </>
       ) : null}
 
+      <Dialog open={duplicateDialogOpen} onOpenChange={setDuplicateDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Resolve duplicate row {duplicateRows.length > 0 ? duplicateIndex + 1 : 0} of{" "}
+              {duplicateRows.length}
+            </DialogTitle>
+            <DialogDescription>
+              Choose whether this existing SQL row should stay unchanged or be updated from the
+              uploaded file.
+            </DialogDescription>
+          </DialogHeader>
+
+          {currentDuplicate ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 rounded-xl border border-border bg-surface p-4 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">Excel row</p>
+                  <p className="num mt-1 font-semibold">
+                    {currentDuplicate.excelRowNumber ?? currentDuplicate.lineItem}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">GRN / Material</p>
+                  <p className="num mt-1 font-semibold">
+                    {currentDuplicate.grnNumber} · {currentDuplicate.materialNumber}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Current SQL quantity</p>
+                  <p className="num mt-1 font-semibold">
+                    {currentDuplicate.previousQuantity?.toLocaleString() ?? "Not available"}{" "}
+                    {currentDuplicate.uom ?? ""}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Incoming quantity</p>
+                  <p className="num mt-1 font-semibold text-primary">
+                    {currentDuplicate.quantity.toLocaleString()} {currentDuplicate.uom ?? ""}
+                  </p>
+                </div>
+              </div>
+              <p className="rounded-lg border border-border p-3 text-sm text-muted-foreground">
+                {currentDuplicate.reason ?? "The same business identity already exists."}
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button variant="outline" onClick={() => decideDuplicate("Skip", false)}>
+                  Skip
+                </Button>
+                <Button variant="outline" onClick={() => decideDuplicate("Skip", true)}>
+                  Skip All
+                </Button>
+                <Button onClick={() => decideDuplicate("Proceed", false)}>Proceed</Button>
+                <Button onClick={() => decideDuplicate("Proceed", true)}>Proceed All</Button>
+              </div>
+              <p className="text-center text-xs text-muted-foreground">
+                Skip keeps the existing row. Proceed applies the incoming values. “All” affects
+                every remaining unresolved duplicate.
+              </p>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <ConfirmationDialog
         open={confirm}
         onOpenChange={setConfirm}
         title="Commit this import batch?"
-        description={`${counts.new} new and ${counts.updated} updated rows will be written to the traceability database. Rejected rows are skipped.`}
+        description={`${counts.new} new rows and ${proceededDuplicates} approved duplicates will be processed. ${skippedDuplicates} duplicates and ${counts.rejected} rejected rows will be skipped.`}
         confirmLabel="Commit Import"
         onConfirm={() => previewBatch && commit.mutate(previewBatch.batchId)}
       />
     </div>
   );
+}
+
+function WorkbookGrid({
+  sheet,
+  headerRow,
+}: {
+  sheet: ImportInspection["sheets"][number];
+  headerRow: number;
+}) {
+  const width = Math.min(80, Math.max(sheet.columnCount, ...sheet.rows.map((row) => row.length)));
+  return (
+    <div
+      className="mt-4 overflow-auto rounded-lg border border-border bg-background"
+      style={{ maxHeight: 430 }}
+    >
+      <table className="min-w-max border-separate border-spacing-0 text-xs">
+        <thead className="sticky top-0 z-30">
+          <tr>
+            <th className="sticky left-0 z-40 min-w-12 border-b border-r border-border bg-muted px-2 py-2 text-center text-muted-foreground">
+              #
+            </th>
+            {Array.from({ length: width }, (_, index) => (
+              <th
+                key={index}
+                className="min-w-32 border-b border-r border-border bg-muted px-3 py-2 text-left font-semibold text-muted-foreground"
+              >
+                {columnLetter(index + 1)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sheet.rows.map((row, rowIndex) => {
+            const selected = rowIndex + 1 === headerRow;
+            return (
+              <tr key={rowIndex} className={selected ? "bg-primary/10" : "hover:bg-muted/30"}>
+                <th
+                  className={cn(
+                    "sticky left-0 z-20 border-b border-r border-border px-2 py-2 text-center font-medium",
+                    selected
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {rowIndex + 1}
+                </th>
+                {Array.from({ length: width }, (_, columnIndex) => (
+                  <td
+                    key={columnIndex}
+                    className={cn(
+                      "max-w-64 truncate border-b border-r border-border px-3 py-2",
+                      selected && "font-semibold text-primary",
+                    )}
+                    title={row[columnIndex] ?? ""}
+                  >
+                    {row[columnIndex] || ""}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {sheet.previewTruncated ? (
+        <p className="sticky bottom-0 left-0 border-t border-border bg-muted/95 px-3 py-2 text-xs text-muted-foreground">
+          Preview limited to the first 75 rows and 80 columns; the complete selected sheet is
+          processed during validation.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function normalize(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function suggestMapping(headers: string[], fields: ImportFieldDefinition[]) {
+  const result: Record<string, string> = {};
+  for (const header of headers) {
+    if (!header.trim()) continue;
+    const normalized = normalize(header);
+    const field = fields.find((candidate) =>
+      candidate.aliases.some((alias) => normalize(alias) === normalized),
+    );
+    if (field && !Object.values(result).includes(field.key)) result[header] = field.key;
+  }
+  return result;
+}
+
+function bestHeader(rows: string[][], fields: ImportFieldDefinition[]) {
+  let best = { rowNumber: 1, mapping: {} as Record<string, string>, score: -1 };
+  rows.slice(0, 25).forEach((headers, index) => {
+    const mapping = suggestMapping(headers, fields);
+    const required = fields.filter(
+      (field) => field.required && Object.values(mapping).includes(field.key),
+    ).length;
+    const score = required * 20 + Object.keys(mapping).length;
+    if (score > best.score) best = { rowNumber: index + 1, mapping, score };
+  });
+  return best;
+}
+
+function profileNameFromFile(fileName: string) {
+  const stem = fileName.replace(/\.[^.]+$/, "").trim();
+  return `${stem || "GRN"} format`.slice(0, 200);
+}
+
+function columnLetter(column: number) {
+  let value = column;
+  let output = "";
+  while (value > 0) {
+    value--;
+    output = String.fromCharCode(65 + (value % 26)) + output;
+    value = Math.floor(value / 26);
+  }
+  return output;
 }

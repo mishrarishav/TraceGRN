@@ -9,6 +9,7 @@ using APItrackGRN.Domain.Enums;
 using APItrackGRN.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.EntityFrameworkCore;
 
 namespace APItrackGRN.Api.Controllers;
@@ -62,46 +63,142 @@ public sealed class ImportsController(
         if (batch is null) return NotFound();
         var rows = await dbContext.ImportRowResults.AsNoTracking().Where(x => x.ImportBatchId == id)
             .OrderBy(x => x.ExcelRowNumber).ToListAsync(cancellationToken);
-        return Ok(new { batch = BatchDto(batch, "Configured template"), rows = rows.Select(RowDto) });
+        return Ok(new { batch = BatchDto(batch, "Configured template"), rows = rows.Select(row => RowDto(row)) });
+    }
+
+    [HttpPost("inspect")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<IActionResult> Inspect(IFormFile file, CancellationToken cancellationToken)
+    {
+        var upload = await ReadUpload(file, cancellationToken);
+        if (upload.Error is not null) return upload.Error;
+
+        ImportWorkbookData workbook;
+        try { workbook = ImportWorkbookReader.Read(upload.Bytes!, upload.Extension!); }
+        catch (InvalidDataException exception) { return ValidationProblem(Error("file", exception.Message)); }
+
+        var profiles = await dbContext.ExcelMappingTemplates.AsNoTracking().Where(x => x.IsActive)
+            .OrderByDescending(x => x.IsDefault).ThenBy(x => x.Name).ToListAsync(cancellationToken);
+        var selection = FindBestSelection(workbook, profiles, file.FileName);
+        var selectedSheet = workbook.Sheets[selection.SheetIndex];
+        var selectedHeaders = HeadersAt(selectedSheet, selection.HeaderRowNumber);
+        var mapping = ImportFileParser.SuggestMapping(selectedHeaders, selection.ProfileMapping);
+        var requiredMapped = ImportFileParser.Fields.Count(x => x.Required && mapping.Values.Contains(x.Key, StringComparer.OrdinalIgnoreCase));
+        var requiredTotal = ImportFileParser.Fields.Count(x => x.Required);
+
+        var sheets = workbook.Sheets.Select((sheet, index) => new
+        {
+            name = sheet.Name,
+            index,
+            rowCount = sheet.Rows.Count,
+            columnCount = sheet.ColumnCount,
+            previewTruncated = sheet.Rows.Count > 75 || sheet.ColumnCount > 80,
+            rows = sheet.Rows.Take(75).Select(row => row.Take(80).ToArray()).ToArray()
+        });
+        return Ok(new
+        {
+            fileName = Path.GetFileName(file.FileName),
+            extension = upload.Extension,
+            sheets,
+            selectedSheetName = selectedSheet.Name,
+            selectedHeaderRow = selection.HeaderRowNumber,
+            matchedTemplate = selection.Profile is null ? null : new
+            {
+                selection.Profile.Id,
+                selection.Profile.Name,
+                confidence = selection.Confidence
+            },
+            mapping,
+            fields = ImportFileParser.Fields,
+            requiredMapped,
+            requiredTotal,
+            readyForImport = requiredMapped == requiredTotal
+        });
+    }
+
+    [HttpPost("profiles")]
+    public async Task<IActionResult> SaveProfile(ImportProfileRequest request, CancellationToken cancellationToken)
+    {
+        var errors = ValidateProfile(request);
+        if (errors.Count > 0) return ValidationProblem(errors);
+
+        ExcelMappingTemplate? profile = null;
+        if (request.TemplateId is not null)
+            profile = await dbContext.ExcelMappingTemplates.SingleOrDefaultAsync(x => x.Id == request.TemplateId, cancellationToken);
+        if (profile is null)
+            profile = await dbContext.ExcelMappingTemplates.SingleOrDefaultAsync(x => x.Name == request.Name.Trim(), cancellationToken);
+
+        if (profile is not null && await dbContext.ExcelMappingTemplates.AnyAsync(
+                x => x.Id != profile.Id && x.Name == request.Name.Trim(), cancellationToken))
+            return Conflict(new ProblemDetails { Title = "Profile name already exists", Status = 409 });
+
+        var creating = profile is null;
+        profile ??= new ExcelMappingTemplate
+        {
+            Name = request.Name.Trim(),
+            MappingJson = "{}",
+            CreatedById = requestContext.UserId,
+            IsActive = true
+        };
+        var existingMapping = DeserializeMapping(profile.MappingJson);
+        foreach (var pair in request.Mapping!.Where(x => !string.IsNullOrWhiteSpace(x.Key) && !string.IsNullOrWhiteSpace(x.Value)))
+            existingMapping[pair.Key.Trim()] = pair.Value.Trim();
+        var sheetAliases = DeserializeStrings(profile.SheetAliasesJson);
+        if (!sheetAliases.Contains(request.SheetName.Trim(), StringComparer.OrdinalIgnoreCase))
+            sheetAliases.Add(request.SheetName.Trim());
+
+        profile.Name = request.Name.Trim();
+        profile.MappingJson = JsonSerializer.Serialize(existingMapping, JsonOptions);
+        profile.SheetName ??= request.SheetName.Trim();
+        profile.HeaderRowNumber = request.HeaderRowNumber;
+        profile.SheetAliasesJson = JsonSerializer.Serialize(sheetAliases, JsonOptions);
+        profile.HeaderSignatureJson = JsonSerializer.Serialize((request.Headers ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToArray(), JsonOptions);
+        profile.FileNamePattern = NormalizeFileName(request.FileName);
+        profile.LastUsedAt = DateTimeOffset.UtcNow;
+        profile.IsActive = true;
+        if (creating) dbContext.ExcelMappingTemplates.Add(profile);
+
+        audit.Add(creating ? "ImportProfileCreated" : "ImportProfileUpdated", "ExcelMappingTemplate",
+            profile.Id.ToString(), newValues: new { profile.Name, Sheet = request.SheetName, request.HeaderRowNumber, AliasesLearned = request.Mapping!.Count });
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return Ok(new { profile.Id, profile.Name, mapping = existingMapping, sheetAliases });
     }
 
     [HttpPost("preview")]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<IActionResult> Preview(IFormFile file, [FromForm] Guid? mappingTemplateId,
+        [FromForm] string? sheetName, [FromForm] int? headerRowNumber, [FromForm] string? mappingJson,
         [FromForm] bool overrideDuplicate = false, CancellationToken cancellationToken = default)
     {
-        if (file.Length == 0) return ValidationProblem(Error("file", "Select a non-empty import file."));
-        if (file.Length > 10 * 1024 * 1024) return StatusCode(413, new ProblemDetails { Title = "File exceeds the 10 MB limit", Status = 413 });
-        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
-        if (extension is not ".xlsx" and not ".csv" and not ".tsv" and not ".txt")
-            return ValidationProblem(Error("file", "Only .xlsx, .csv, .tsv and .txt files are supported."));
-
-        await using var memory = new MemoryStream();
-        await file.CopyToAsync(memory, cancellationToken);
-        var bytes = memory.ToArray();
-        if (extension == ".xlsx" && (bytes.Length < 4 || bytes[0] != (byte)'P' || bytes[1] != (byte)'K'))
-            return ValidationProblem(Error("file", "The uploaded file is not a valid XLSX workbook."));
+        var upload = await ReadUpload(file, cancellationToken);
+        if (upload.Error is not null) return upload.Error;
+        var extension = upload.Extension!;
+        var bytes = upload.Bytes!;
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         var duplicate = await dbContext.ImportBatches.AsNoTracking().Where(x => x.FileHash == hash && x.ImportStatus != ImportStatus.Failed)
             .OrderByDescending(x => x.UploadedAt).Select(x => new { x.Id, x.FileName, x.UploadedAt }).FirstOrDefaultAsync(cancellationToken);
-        if (duplicate is not null && !overrideDuplicate)
-        {
-            var problem = new ProblemDetails { Title = "Duplicate import file", Detail = $"This file was already uploaded as {duplicate.FileName} at {duplicate.UploadedAt:O}.", Status = 409 };
-            problem.Extensions["code"] = "DUPLICATE_FILE";
-            problem.Extensions["existingBatchId"] = duplicate.Id;
-            return Conflict(problem);
-        }
-
         var strategy = await dbContext.IdentificationStrategies.SingleAsync(x => x.IsActive, cancellationToken);
         var selectedFields = JsonSerializer.Deserialize<List<string>>(strategy.SelectedFieldsJson, JsonOptions) ?? [];
         var template = mappingTemplateId is null
-            ? await dbContext.ExcelMappingTemplates.AsNoTracking().OrderByDescending(x => x.IsDefault).FirstOrDefaultAsync(x => x.IsActive, cancellationToken)
-            : await dbContext.ExcelMappingTemplates.AsNoTracking().SingleOrDefaultAsync(x => x.Id == mappingTemplateId && x.IsActive, cancellationToken);
+            ? await dbContext.ExcelMappingTemplates.OrderByDescending(x => x.IsDefault).FirstOrDefaultAsync(x => x.IsActive, cancellationToken)
+            : await dbContext.ExcelMappingTemplates.SingleOrDefaultAsync(x => x.Id == mappingTemplateId && x.IsActive, cancellationToken);
         if (template is null) return ValidationProblem(Error("mappingTemplateId", "No active Excel mapping template is configured."));
-        var mapping = JsonSerializer.Deserialize<Dictionary<string, string>>(template.MappingJson, JsonOptions) ?? [];
+        Dictionary<string, string> mapping;
+        try
+        {
+            mapping = string.IsNullOrWhiteSpace(mappingJson)
+                ? DeserializeMapping(template.MappingJson)
+                : JsonSerializer.Deserialize<Dictionary<string, string>>(mappingJson, JsonOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            return ValidationProblem(Error("mappingJson", "Column mapping is not valid JSON."));
+        }
+        sheetName = string.IsNullOrWhiteSpace(sheetName) ? template.SheetName : sheetName.Trim();
+        headerRowNumber ??= template.HeaderRowNumber;
         var stopwatch = Stopwatch.StartNew();
         List<NormalizedImportRow> parsed;
-        try { parsed = ImportFileParser.Parse(bytes, extension, mapping); }
+        try { parsed = ImportFileParser.Parse(bytes, extension, mapping, sheetName, headerRowNumber); }
         catch (InvalidDataException exception) { return ValidationProblem(Error("file", exception.Message)); }
 
         var materials = await dbContext.Materials.AsNoTracking().ToDictionaryAsync(x => x.MaterialNumber, StringComparer.OrdinalIgnoreCase, cancellationToken);
@@ -145,7 +242,7 @@ public sealed class ImportsController(
         {
             FileName = Path.GetFileName(file.FileName), FileHash = hash, UploadedById = requestContext.UserId,
             TotalRows = candidates.Count, ImportStatus = ImportStatus.Pending,
-            IdentificationStrategyId = strategy.Id, IsDuplicateOverride = overrideDuplicate
+            IdentificationStrategyId = strategy.Id, IsDuplicateOverride = duplicate is not null || overrideDuplicate
         };
         dbContext.ImportBatches.Add(batch);
         foreach (var candidate in candidates)
@@ -163,20 +260,33 @@ public sealed class ImportsController(
         }
         stopwatch.Stop();
         batch.ProcessingDurationMs = stopwatch.ElapsedMilliseconds;
-        audit.Add("ExcelPreviewed", "ImportBatch", batch.Id.ToString(), newValues: new { batch.FileName, batch.TotalRows, batch.NewRows, batch.UpdatedRows, batch.UnchangedRows, batch.WarningRows, batch.RejectedRows, TemplateName = template.Name, StrategyName = strategy.Name });
+        template.LastUsedAt = DateTimeOffset.UtcNow;
+        audit.Add("ExcelPreviewed", "ImportBatch", batch.Id.ToString(), newValues: new { batch.FileName, batch.TotalRows, batch.NewRows, batch.UpdatedRows, batch.UnchangedRows, batch.WarningRows, batch.RejectedRows, TemplateName = template.Name, SheetName = sheetName, HeaderRowNumber = headerRowNumber, StrategyName = strategy.Name });
         await dbContext.SaveChangesAsync(cancellationToken);
         var rowResults = await dbContext.ImportRowResults.AsNoTracking().Where(x => x.ImportBatchId == batch.Id).OrderBy(x => x.ExcelRowNumber).ToListAsync(cancellationToken);
-        return Ok(new { batch = BatchDto(batch, template.Name), rows = rowResults.Select(RowDto) });
+        return Ok(new
+        {
+            batch = BatchDto(batch, template.Name),
+            rows = rowResults.Select(result =>
+            {
+                existing.TryGetValue(result.BusinessKeyHash ?? string.Empty, out var current);
+                return RowDto(result, current);
+            })
+        });
     }
 
     [HttpPost("{id:guid}/commit")]
-    public async Task<IActionResult> Commit(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> Commit(Guid id,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ImportCommitRequest? request,
+        CancellationToken cancellationToken)
     {
         var strategy = dbContext.Database.CreateExecutionStrategy();
-        return await strategy.ExecuteAsync(() => CommitCore(id, cancellationToken));
+        return await strategy.ExecuteAsync(() => CommitCore(id, request?.DuplicateDecisions ?? [], cancellationToken));
     }
 
-    private async Task<IActionResult> CommitCore(Guid id, CancellationToken cancellationToken)
+    private async Task<IActionResult> CommitCore(Guid id,
+        IReadOnlyCollection<ImportDuplicateDecision> requestedDecisions,
+        CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
         var batch = await dbContext.ImportBatches.Include(x => x.RowResults).Include(x => x.IdentificationStrategy)
@@ -186,6 +296,49 @@ public sealed class ImportsController(
             return Conflict(new ProblemDetails { Title = "Import was already committed", Detail = $"Current status: {batch.ImportStatus}", Status = 409 });
         batch.ImportStatus = ImportStatus.Processing;
         var rows = batch.RowResults.OrderBy(x => x.ExcelRowNumber).ToList();
+        var duplicateRows = rows.Where(x => x.GrnLineId is not null && x.ResultType != ImportResultType.Rejected)
+            .ToDictionary(x => x.Id);
+        var decisions = new Dictionary<Guid, ImportDuplicateAction>();
+        var decisionErrors = new List<string>();
+        foreach (var decision in requestedDecisions)
+        {
+            if (!duplicateRows.ContainsKey(decision.RowId))
+            {
+                decisionErrors.Add($"Row {decision.RowId} is not an actionable duplicate in this batch.");
+                continue;
+            }
+            if (!Enum.TryParse<ImportDuplicateAction>(decision.Action, true, out var action))
+            {
+                decisionErrors.Add($"Row {decision.RowId} has unsupported action '{decision.Action}'. Use Skip or Proceed.");
+                continue;
+            }
+            if (!decisions.TryAdd(decision.RowId, action))
+                decisionErrors.Add($"Row {decision.RowId} has more than one duplicate decision.");
+        }
+        if (decisionErrors.Count > 0)
+            return ValidationProblem(new Dictionary<string, string[]> { ["duplicateDecisions"] = decisionErrors.ToArray() });
+
+        var unresolved = duplicateRows.Values.Where(x => !decisions.ContainsKey(x.Id)).OrderBy(x => x.ExcelRowNumber).ToList();
+        if (unresolved.Count > 0)
+        {
+            var problem = new ProblemDetails
+            {
+                Title = "Duplicate row decisions required",
+                Detail = $"Resolve {unresolved.Count} duplicate row{(unresolved.Count == 1 ? string.Empty : "s")} before committing this import.",
+                Status = 409
+            };
+            problem.Extensions["code"] = "DUPLICATE_DECISIONS_REQUIRED";
+            problem.Extensions["rows"] = unresolved.Select(x => new { rowId = x.Id, x.ExcelRowNumber }).ToArray();
+            return Conflict(problem);
+        }
+
+        var skippedDuplicateIds = decisions.Where(x => x.Value == ImportDuplicateAction.Skip)
+            .Select(x => x.Key).ToHashSet();
+        foreach (var result in rows.Where(x => skippedDuplicateIds.Contains(x.Id)))
+        {
+            result.ResultType = ImportResultType.Unchanged;
+            result.Message = "Skipped by operator; existing database row was kept unchanged.";
+        }
         var materials = await dbContext.Materials.ToDictionaryAsync(x => x.MaterialNumber, StringComparer.OrdinalIgnoreCase, cancellationToken);
         var vendors = await dbContext.Vendors.Include(x => x.Aliases)
             .ToDictionaryAsync(x => x.VendorCode, StringComparer.OrdinalIgnoreCase, cancellationToken);
@@ -328,14 +481,17 @@ public sealed class ImportsController(
 
         batch.ImportStatus = batch.RowResults.Any(x => x.ResultType is ImportResultType.Warning or ImportResultType.Rejected)
             ? ImportStatus.CompletedWithWarnings : ImportStatus.Completed;
+        batch.NewRows = batch.RowResults.Count(x => x.ResultType == ImportResultType.New);
         batch.RejectedRows = batch.RowResults.Count(x => x.ResultType == ImportResultType.Rejected);
         batch.WarningRows = batch.RowResults.Count(x => x.ResultType == ImportResultType.Warning);
         batch.UpdatedRows = batch.RowResults.Count(x => x.ResultType == ImportResultType.Updated);
         batch.UnchangedRows = batch.RowResults.Count(x => x.ResultType == ImportResultType.Unchanged);
-        audit.Add("ExcelImportCommitted", "ImportBatch", batch.Id.ToString(), newValues: new { batch.FileName, applied, batch.ImportStatus, batch.RejectedRows, batch.WarningRows });
+        var skippedDuplicates = skippedDuplicateIds.Count;
+        var proceededDuplicates = decisions.Count - skippedDuplicates;
+        audit.Add("ExcelImportCommitted", "ImportBatch", batch.Id.ToString(), newValues: new { batch.FileName, applied, skippedDuplicates, proceededDuplicates, batch.ImportStatus, batch.RejectedRows, batch.WarningRows });
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return Ok(new { batchId = batch.Id, status = batch.ImportStatus.ToString(), applied, batch.NewRows, batch.UpdatedRows, batch.UnchangedRows, batch.WarningRows, batch.RejectedRows });
+        return Ok(new { batchId = batch.Id, status = batch.ImportStatus.ToString(), applied, skippedDuplicates, proceededDuplicates, batch.NewRows, batch.UpdatedRows, batch.UnchangedRows, batch.WarningRows, batch.RejectedRows });
     }
 
     private static NormalizedImportRow ApplyDefaults(
@@ -543,27 +699,146 @@ public sealed class ImportsController(
             ImportStatus.CompletedWithWarnings => "Warning", ImportStatus.Pending => "Pending",
             ImportStatus.Processing => "Pending", _ => x.ImportStatus.ToString()
         }, durationSeconds = Math.Round(x.ProcessingDurationMs / 1000d, 2), x.FileHash,
-        identificationStrategy = x.IdentificationStrategy?.Name ?? "Active strategy", mappingTemplate = template
+        identificationStrategy = x.IdentificationStrategy?.Name ?? "Active strategy", mappingTemplate = template,
+        isDuplicateFile = x.IsDuplicateOverride
     };
 
-    private static object RowDto(ImportRowResult result)
+    private static object RowDto(ImportRowResult result, ExistingLine? existing = null)
     {
         var row = JsonSerializer.Deserialize<NormalizedImportRow>(result.RawDataJson, JsonOptions)!;
         return new
         {
-            id = result.Id.ToString(), row.GrnNumber,
+            id = result.Id.ToString(), result.ExcelRowNumber, row.GrnNumber,
             lineItem = int.TryParse(row.SapLineItemNumber, out var line) ? line : row.ExcelRowNumber,
             row.MaterialNumber, description = row.MaterialDescription, quantity = row.ReceivedQuantity,
+            previousQuantity = existing?.ReceivedQuantity, issuedQuantity = existing?.IssuedQuantity,
             packingStandard = row.PackingStandard, batch = row.BatchNumber, row.Plant,
             uom = row.Uom, vendorCode = row.VendorCode, vendorName = row.VendorName,
             invoiceNumber = row.InvoiceNumber, invoiceDate = row.InvoiceDate, binLocation = row.BinLocation,
             manufacturingDate = row.ManufacturingDate, expiryDate = row.ExpiryDate,
             expectedLabelCount = row.ExpectedLabelCount,
+            isDuplicate = result.GrnLineId is not null,
+            requiresDuplicateDecision = result.GrnLineId is not null && result.ResultType != ImportResultType.Rejected,
             status = result.ResultType.ToString(), reason = result.Message
         };
     }
 
+    private async Task<(byte[]? Bytes, string? Extension, IActionResult? Error)> ReadUpload(
+        IFormFile file, CancellationToken cancellationToken)
+    {
+        if (file.Length == 0)
+            return (null, null, ValidationProblem(Error("file", "Select a non-empty import file.")));
+        if (file.Length > 10 * 1024 * 1024)
+            return (null, null, StatusCode(413, new ProblemDetails { Title = "File exceeds the 10 MB limit", Status = 413 }));
+        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (!ImportWorkbookReader.Supports(extension))
+            return (null, null, ValidationProblem(Error("file", ImportWorkbookReader.SupportedFormatsMessage)));
+        await using var memory = new MemoryStream();
+        await file.CopyToAsync(memory, cancellationToken);
+        return (memory.ToArray(), extension, null);
+    }
+
+    private static ImportSelection FindBestSelection(
+        ImportWorkbookData workbook,
+        IReadOnlyList<ExcelMappingTemplate> profiles,
+        string fileName)
+    {
+        ImportSelection? best = null;
+        var candidates = profiles.Count == 0 ? new ExcelMappingTemplate?[] { null } : profiles.Cast<ExcelMappingTemplate?>();
+        foreach (var profile in candidates)
+        {
+            var configured = profile is null ? [] : DeserializeMapping(profile.MappingJson);
+            var sheetAliases = profile is null ? [] : DeserializeStrings(profile.SheetAliasesJson);
+            if (profile?.SheetName is { Length: > 0 } && !sheetAliases.Contains(profile.SheetName, StringComparer.OrdinalIgnoreCase))
+                sheetAliases.Add(profile.SheetName);
+            var signature = profile is null ? [] : DeserializeStrings(profile.HeaderSignatureJson);
+            for (var sheetIndex = 0; sheetIndex < workbook.Sheets.Count; sheetIndex++)
+            {
+                var sheet = workbook.Sheets[sheetIndex];
+                var rowLimit = Math.Min(sheet.Rows.Count, 25);
+                for (var headerIndex = 0; headerIndex < rowLimit; headerIndex++)
+                {
+                    var headers = sheet.Rows[headerIndex];
+                    if (!headers.Any(x => !string.IsNullOrWhiteSpace(x))) continue;
+                    var mapping = ImportFileParser.SuggestMapping(headers, configured);
+                    var required = ImportFileParser.Fields.Count(x => x.Required && mapping.Values.Contains(x.Key, StringComparer.OrdinalIgnoreCase));
+                    var mapped = mapping.Values.Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                    var sheetMatch = sheetAliases.Contains(sheet.Name, StringComparer.OrdinalIgnoreCase);
+                    var signatureMatches = signature.Count == 0 ? 0 : headers.Count(header => signature.Any(saved =>
+                        ImportFileParser.NormalizeHeader(saved) == ImportFileParser.NormalizeHeader(header)));
+                    var fileMatch = profile?.FileNamePattern is { Length: > 0 } pattern &&
+                        string.Equals(pattern, NormalizeFileName(fileName), StringComparison.OrdinalIgnoreCase);
+                    var score = required * 25 + mapped * 3 + (sheetMatch ? 30 : 0) + signatureMatches * 2
+                        + (fileMatch ? 8 : 0) + (profile?.HeaderRowNumber == headerIndex + 1 ? 4 : 0)
+                        + (profile?.IsDefault == true ? 1 : 0);
+                    var confidence = Math.Clamp(required * 20 + Math.Min(20, mapped * 2) + (sheetMatch ? 15 : 0)
+                        + Math.Min(15, signatureMatches * 2), 0, 100);
+                    var candidate = new ImportSelection(sheetIndex, headerIndex + 1, profile, configured, score, confidence);
+                    if (best is null || candidate.Score > best.Score) best = candidate;
+                }
+            }
+        }
+
+        if (best is not null) return best;
+        return new ImportSelection(0, 1, profiles.FirstOrDefault(),
+            profiles.FirstOrDefault() is { } fallback ? DeserializeMapping(fallback.MappingJson) : [], 0, 0);
+    }
+
+    private static IReadOnlyList<string> HeadersAt(ImportSheetData sheet, int headerRowNumber) =>
+        headerRowNumber > 0 && headerRowNumber <= sheet.Rows.Count ? sheet.Rows[headerRowNumber - 1] : [];
+
+    private static Dictionary<string, string> DeserializeMapping(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var values = JsonSerializer.Deserialize<Dictionary<string, string>>(json, JsonOptions) ?? [];
+            return new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (JsonException)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static List<string> DeserializeStrings(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try { return JsonSerializer.Deserialize<List<string>>(json, JsonOptions) ?? []; }
+        catch (JsonException) { return []; }
+    }
+
+    private static string NormalizeFileName(string? fileName)
+    {
+        var stem = Path.GetFileNameWithoutExtension(fileName ?? string.Empty);
+        var normalized = new string(stem.ToLowerInvariant().Select(character => char.IsDigit(character) ? ' ' : character).ToArray());
+        return string.Join('-', normalized.Split([' ', '_', '-'], StringSplitOptions.RemoveEmptyEntries)).Trim('-');
+    }
+
+    private static Dictionary<string, string[]> ValidateProfile(ImportProfileRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(request.Name)) errors["name"] = ["Profile name is required."];
+        if (string.IsNullOrWhiteSpace(request.SheetName)) errors["sheetName"] = ["Worksheet is required."];
+        if (request.HeaderRowNumber < 1) errors["headerRowNumber"] = ["Header row must be 1 or greater."];
+        if (request.Mapping is null || request.Mapping.Count == 0) errors["mapping"] = ["Map at least one source column."];
+        if (request.Mapping is null) return errors;
+        var knownFields = ImportFileParser.Fields.Select(x => x.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (request.Mapping.Values.Any(x => !knownFields.Contains(x))) errors["mapping"] = ["Mapping contains an unknown TrackGRN field."];
+        if (!ImportFileParser.HasRequiredFields(request.Mapping))
+            errors["mapping"] = ["GRN Number, GRN Date, Material Number and Received Quantity must be mapped."];
+        return errors;
+    }
+
     private static Dictionary<string, string[]> Error(string key, string message) => new() { [key] = [message] };
+
+    private sealed record ImportSelection(
+        int SheetIndex,
+        int HeaderRowNumber,
+        ExcelMappingTemplate? Profile,
+        IReadOnlyDictionary<string, string> ProfileMapping,
+        int Score,
+        int Confidence);
 
     private sealed record PreviewCandidate(
         NormalizedImportRow Row,
@@ -575,4 +850,23 @@ public sealed class ImportsController(
         string? BinLocation, DateOnly? ManufacturingDate, DateOnly? ExpiryDate, int? ExpectedLabelCount,
         string? VendorCode, string? VendorName, string? InvoiceNumber, DateOnly? InvoiceDate,
         decimal IssuedQuantity, bool HasProcessedLabels);
+}
+
+public sealed record ImportProfileRequest(
+    Guid? TemplateId,
+    string Name,
+    string FileName,
+    string SheetName,
+    int HeaderRowNumber,
+    Dictionary<string, string>? Mapping,
+    List<string>? Headers);
+
+public sealed record ImportCommitRequest(List<ImportDuplicateDecision>? DuplicateDecisions);
+
+public sealed record ImportDuplicateDecision(Guid RowId, string Action);
+
+public enum ImportDuplicateAction
+{
+    Skip,
+    Proceed
 }

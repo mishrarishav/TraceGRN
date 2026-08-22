@@ -406,7 +406,7 @@ export const importRows: ImportRowResult[] = [
     batch: "B240813-21",
     plant: "2000",
     status: "Warning",
-    reason: "Packing standard missing in SAP row — default applied.",
+    reason: "Pack Qty missing in SAP row — default applied.",
   },
   {
     id: "r7",
@@ -537,7 +537,7 @@ export const revisions: GRNRevision[] = [
     id: "rev-3",
     grnNumber: "500515337",
     materialNumber: "M310",
-    field: "Packing Standard",
+    field: "Pack Qty",
     oldValue: "—",
     newValue: "100",
     changedBy: "SAP Import",

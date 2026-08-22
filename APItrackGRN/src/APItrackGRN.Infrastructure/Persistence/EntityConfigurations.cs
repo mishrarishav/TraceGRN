@@ -298,6 +298,10 @@ internal sealed class ExcelMappingTemplateConfiguration : IEntityTypeConfigurati
         builder.ToTable("ExcelMappingTemplates");
         builder.Property(x => x.Name).HasMaxLength(200).IsRequired();
         builder.Property(x => x.MappingJson).HasColumnType("nvarchar(max)").IsRequired();
+        builder.Property(x => x.SheetName).HasMaxLength(200);
+        builder.Property(x => x.SheetAliasesJson).HasColumnType("nvarchar(max)");
+        builder.Property(x => x.HeaderSignatureJson).HasColumnType("nvarchar(max)");
+        builder.Property(x => x.FileNamePattern).HasMaxLength(200);
         builder.HasIndex(x => x.Name).IsUnique();
     }
 }

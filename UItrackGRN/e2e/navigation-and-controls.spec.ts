@@ -101,6 +101,27 @@ test.describe("navigation and operational controls", () => {
     );
   });
 
+  test("compact viewport drawer keeps its navigation independently scrollable", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 900, height: 560 });
+    await gotoReady(page, "/users");
+    await page.getByRole("button", { name: "Open menu" }).click();
+    const drawer = page.getByRole("dialog");
+    const sidebar = drawer.getByTestId("sidebar-scroll");
+    await expect(sidebar).toBeVisible();
+    const dimensions = await sidebar.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+    await sidebar.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect.poll(() => sidebar.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await expect(drawer.getByRole("link", { name: "Audit Log" })).toBeVisible();
+  });
+
   test("client name and uploaded logo persist to header, footer and login", async ({ page }) => {
     const clientName = "Playwright Client Industries";
     const logoPath = fileURLToPath(new URL("../public/branding/AppLogo.png", import.meta.url));

@@ -117,6 +117,7 @@ export interface MaterialLabel {
 
 export interface ImportRowResult {
   id: string;
+  excelRowNumber?: number;
   grnNumber: string;
   lineItem: number;
   materialNumber: string;
@@ -136,6 +137,8 @@ export interface ImportRowResult {
   manufacturingDate?: string | null;
   expiryDate?: string | null;
   expectedLabelCount?: number | null;
+  isDuplicate?: boolean;
+  requiresDuplicateDecision?: boolean;
   status: RecordStatus;
   reason?: string | undefined;
 }
@@ -156,6 +159,7 @@ export interface ImportBatch {
   fileHash: string;
   identificationStrategy: string;
   mappingTemplate: string;
+  isDuplicateFile?: boolean;
 }
 
 export interface MaterialTransaction {

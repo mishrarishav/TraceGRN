@@ -15,7 +15,7 @@ import type {
 } from "@/types";
 import { createRuntimeId } from "@/lib/id";
 
-export const API_BASE_URL = import.meta.env["VITE_API_BASE_URL"] ?? "/api";
+export const API_BASE_URL = import.meta.env["VITE_API_BASE_URL"] || "/api";
 export const PRINT_AGENT_INSTALLER_URL = `${API_BASE_URL.replace(/\/api\/?$/, "")}/downloads/TrackGRN-PrintAgent.msi`;
 export const APP_VERSION = "1.1.2";
 const ACCESS_TOKEN_KEY = "trackgrn-access-token";
@@ -238,17 +238,88 @@ export const getImportOptions = () => apiRequest<ImportOptions>("/imports/option
 export function previewGRNImport(
   file: File,
   mappingTemplateId?: string,
+  selection?: {
+    sheetName: string;
+    headerRowNumber: number;
+    mapping: Record<string, string>;
+  },
   overrideDuplicate = false,
 ) {
   const body = new FormData();
   body.append("file", file);
   if (mappingTemplateId) body.append("mappingTemplateId", mappingTemplateId);
+  if (selection) {
+    body.append("sheetName", selection.sheetName);
+    body.append("headerRowNumber", String(selection.headerRowNumber));
+    body.append("mappingJson", JSON.stringify(selection.mapping));
+  }
   body.append("overrideDuplicate", String(overrideDuplicate));
   return apiRequest<ImportPreviewResponse>("/imports/preview", { method: "POST", body });
 }
-export const commitGRNImport = (batchId: string) =>
-  apiRequest<{ batchId: string; status: string; applied: number }>(`/imports/${batchId}/commit`, {
+export interface ImportFieldDefinition {
+  key: string;
+  label: string;
+  required: boolean;
+  aliases: string[];
+}
+export interface ImportSheetInspection {
+  name: string;
+  index: number;
+  rowCount: number;
+  columnCount: number;
+  previewTruncated: boolean;
+  rows: string[][];
+}
+export interface ImportInspection {
+  fileName: string;
+  extension: string;
+  sheets: ImportSheetInspection[];
+  selectedSheetName: string;
+  selectedHeaderRow: number;
+  matchedTemplate: { id: string; name: string; confidence: number } | null;
+  mapping: Record<string, string>;
+  fields: ImportFieldDefinition[];
+  requiredMapped: number;
+  requiredTotal: number;
+  readyForImport: boolean;
+}
+export interface ImportProfileMutation {
+  templateId?: string;
+  name: string;
+  fileName: string;
+  sheetName: string;
+  headerRowNumber: number;
+  mapping: Record<string, string>;
+  headers: string[];
+}
+export type ImportDuplicateAction = "Skip" | "Proceed";
+export interface ImportDuplicateDecision {
+  rowId: string;
+  action: ImportDuplicateAction;
+}
+export function inspectGRNImport(file: File) {
+  const body = new FormData();
+  body.append("file", file);
+  return apiRequest<ImportInspection>("/imports/inspect", { method: "POST", body });
+}
+export const saveImportProfile = (request: ImportProfileMutation) =>
+  apiRequest<{ id: string; name: string; mapping: Record<string, string>; sheetAliases: string[] }>(
+    "/imports/profiles",
+    { method: "POST", body: JSON.stringify(request) },
+  );
+export const commitGRNImport = (
+  batchId: string,
+  duplicateDecisions: ImportDuplicateDecision[] = [],
+) =>
+  apiRequest<{
+    batchId: string;
+    status: string;
+    applied: number;
+    skippedDuplicates: number;
+    proceededDuplicates: number;
+  }>(`/imports/${batchId}/commit`, {
     method: "POST",
+    body: JSON.stringify({ duplicateDecisions }),
   });
 export const getImportBatches = () => apiRequest<ImportBatch[]>("/imports");
 export const getImportBatch = (id: string) => apiRequest<ImportPreviewResponse>(`/imports/${id}`);
@@ -273,6 +344,11 @@ export const createUser = (request: UserMutation) =>
   apiRequest<{ id: string }>("/users", { method: "POST", body: JSON.stringify(request) });
 export const updateUser = (id: string, request: UserMutation) =>
   apiRequest<void>(`/users/${id}`, { method: "PUT", body: JSON.stringify(request) });
+export const resetUserPassword = (id: string, newPassword: string, confirmPassword: string) =>
+  apiRequest<{ userId: string; revokedSessions: number }>(`/users/${id}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ newPassword, confirmPassword }),
+  });
 export const deactivateUser = (id: string) =>
   apiRequest<void>(`/users/${id}`, { method: "DELETE" });
 

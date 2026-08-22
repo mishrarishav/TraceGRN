@@ -68,9 +68,12 @@ export function TopHeader() {
             <Menu className="h-5 w-5" />
           </Button>
         </SheetTrigger>
-        <SheetContent side="left" className="w-72 bg-sidebar p-0">
+        <SheetContent
+          side="left"
+          className="flex h-dvh min-h-0 w-72 flex-col overflow-hidden bg-sidebar p-0"
+        >
           <SheetTitle className="sr-only">Navigation</SheetTitle>
-          <div className="flex h-16 items-center border-b border-sidebar-border px-4">
+          <div className="flex h-16 shrink-0 items-center border-b border-sidebar-border px-4">
             <BrandMark />
           </div>
           <SidebarNav onNavigate={() => setMobileOpen(false)} />

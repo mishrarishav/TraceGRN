@@ -43,19 +43,17 @@ test.describe("SQL-backed master CRUD", () => {
 
     await gotoReady(page, "/materials");
     await page.getByRole("button", { name: "Add Material" }).click();
-    await page.getByLabel("Packing standard").fill("0");
+    await page.getByLabel("Pack Qty").fill("0");
     await page.getByRole("button", { name: "Save Material" }).click();
     await expect
       .poll(() =>
-        page
-          .getByLabel("Packing standard")
-          .evaluate((input: HTMLInputElement) => input.checkValidity()),
+        page.getByLabel("Pack Qty").evaluate((input: HTMLInputElement) => input.checkValidity()),
       )
       .toBe(false);
 
     await page.getByLabel("Material number").fill(materialNumber);
     await page.getByLabel("Description").fill(`Playwright material ${suffix}`);
-    await page.getByLabel("Packing standard").fill("25");
+    await page.getByLabel("Pack Qty").fill("25");
     await page.getByLabel("Part number").fill(`PART-${suffix}`);
     await page.getByLabel("Default bin").fill("BIN-PW-01");
     await page.getByLabel("Opening/reference quantity").fill("1250");

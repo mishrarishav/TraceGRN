@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 var printerTestMode = args.Contains("--printer-test", StringComparer.OrdinalIgnoreCase);
@@ -62,21 +63,21 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 var jwtSection = builder.Configuration.GetSection(JwtSettings.SectionName);
-var jwtSettings = jwtSection.Get<JwtSettings>()
-    ?? throw new InvalidOperationException("JWT settings are missing.");
-if (string.IsNullOrWhiteSpace(jwtSettings.Key)
-    || jwtSettings.Key.Length < 32
-    || jwtSettings.Key.StartsWith("SET_WITH_", StringComparison.Ordinal)
-    || jwtSettings.Key.StartsWith("REPLACE_WITH_", StringComparison.Ordinal))
-{
-    throw new InvalidOperationException("JWT key must contain at least 32 characters.");
-}
-
-builder.Services.Configure<JwtSettings>(jwtSection);
+builder.Services.AddOptions<JwtSettings>()
+    .Bind(jwtSection)
+    .Validate(settings => !string.IsNullOrWhiteSpace(settings.Key)
+        && settings.Key.Length >= 32
+        && !settings.Key.StartsWith("SET_WITH_", StringComparison.Ordinal)
+        && !settings.Key.StartsWith("REPLACE_WITH_", StringComparison.Ordinal),
+        "JWT key must contain at least 32 characters.")
+    .ValidateOnStart();
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+    .AddJwtBearer();
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<IOptions<JwtSettings>>((options, jwtOptions) =>
     {
+        var jwtSettings = jwtOptions.Value;
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,

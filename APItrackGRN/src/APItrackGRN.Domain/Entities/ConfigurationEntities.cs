@@ -15,6 +15,12 @@ public sealed class ExcelMappingTemplate : BaseEntity
 {
     public required string Name { get; set; }
     public required string MappingJson { get; set; }
+    public string? SheetName { get; set; }
+    public int? HeaderRowNumber { get; set; }
+    public string? SheetAliasesJson { get; set; }
+    public string? HeaderSignatureJson { get; set; }
+    public string? FileNamePattern { get; set; }
+    public DateTimeOffset? LastUsedAt { get; set; }
     public bool IsDefault { get; set; }
     public bool IsActive { get; set; } = true;
     public Guid? CreatedById { get; set; }
