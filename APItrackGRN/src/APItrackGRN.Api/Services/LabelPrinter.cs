@@ -13,8 +13,8 @@ namespace APItrackGRN.Api.Services;
 public sealed class PrinterOptions
 {
     public const string SectionName = "Printing";
-    public string Mode { get; init; } = "Simulation";
-    public string PrinterName { get; init; } = "TrackGRN Simulator";
+    public string Mode { get; init; } = "WindowsSpooler";
+    public string PrinterName { get; init; } = "ZDesigner ZD230-203dpi ZPL";
     public string? Host { get; init; }
     public int Port { get; init; } = 9100;
     public int Dpi { get; init; } = 203;
@@ -30,7 +30,8 @@ public sealed record LabelPrintJob(
     decimal Quantity,
     string Uom,
     int SequenceNumber,
-    int SequenceTotal);
+    int SequenceTotal,
+    string? QrPayload = null);
 
 public sealed record PrintDispatchResult(string Mode, string Printer, bool Simulated, string Payload);
 
@@ -86,7 +87,15 @@ public sealed class LabelPrinter : ILabelPrinter
 
         try
         {
-            return JsonSerializer.Deserialize<PrinterOptions>(json, JsonOptions) ?? _fallback;
+            var configured = JsonSerializer.Deserialize<PrinterOptions>(json, JsonOptions) ?? _fallback;
+            if (string.Equals(configured.Mode, "Simulation", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(_fallback.Mode, "Simulation", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "Ignoring legacy simulation printer configuration; physical printer defaults will be used");
+                return _fallback;
+            }
+            return configured;
         }
         catch (JsonException exception)
         {
@@ -202,16 +211,21 @@ public sealed class LabelPrinter : ILabelPrinter
     private static string BuildZpl(LabelPrintJob job)
     {
         static string Clean(string value) => value.Replace("^", string.Empty).Replace("~", string.Empty);
+        static string QrData(string value) => Clean(value)
+            .Replace("\\", "\\5C", StringComparison.Ordinal)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\n", "\\0A", StringComparison.Ordinal);
+        var qrPayload = QrData(job.QrPayload ?? job.LabelUid);
         return $"^XA\n" +
                "^PW812^LL609\n" +
                $"^FO40,35^A0N,36,36^FDTRACKGRN - MATERIAL LABEL^FS\n" +
-               $"^FO40,90^A0N,28,28^FDUID: {Clean(job.LabelUid)}^FS\n" +
                $"^FO40,135^A0N,28,28^FDMATERIAL: {Clean(job.MaterialNumber)}^FS\n" +
                $"^FO40,175^A0N,24,24^FD{Clean(job.Description)}^FS\n" +
                $"^FO40,220^A0N,26,26^FDGRN: {Clean(job.GrnNumber)}  BATCH: {Clean(job.BatchNumber)}^FS\n" +
                $"^FO40,265^A0N,30,30^FDQTY: {job.Quantity:0.####} {Clean(job.Uom)}^FS\n" +
                $"^FO40,310^A0N,24,24^FDPACK: {job.SequenceNumber} OF {job.SequenceTotal}^FS\n" +
-               $"^FO520,90^BQN,2,7^FDLA,{Clean(job.LabelUid)}^FS\n" +
+               $"^FO520,90^BQN,2,7^FH\\^FDLA,{qrPayload}^FS\n" +
+               "^FO40,570^A0N,20,20^FDMATERIAL TRACEABILITY SYSTEM - SANAND PLANT^FS\n" +
                "^XZ";
     }
 }

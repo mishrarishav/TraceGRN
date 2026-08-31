@@ -888,6 +888,7 @@ function WorkbookGrid({
   headerRow: number;
 }) {
   const width = Math.min(80, Math.max(sheet.columnCount, ...sheet.rows.map((row) => row.length)));
+  const frozenHeaders = sheet.rows[headerRow - 1] ?? [];
   return (
     <div
       className="mt-4 overflow-auto rounded-lg border border-border bg-background"
@@ -908,29 +909,34 @@ function WorkbookGrid({
               </th>
             ))}
           </tr>
+          <tr data-testid="frozen-workbook-header">
+            <th className="sticky left-0 z-40 min-w-12 border-b border-r border-primary/30 bg-primary px-2 py-2 text-center font-semibold text-primary-foreground">
+              {headerRow}
+            </th>
+            {Array.from({ length: width }, (_, columnIndex) => (
+              <th
+                key={columnIndex}
+                className="max-w-64 min-w-32 truncate border-b border-r border-primary/20 bg-primary/15 px-3 py-2 text-left font-semibold text-primary backdrop-blur-sm"
+                title={frozenHeaders[columnIndex] ?? ""}
+              >
+                {frozenHeaders[columnIndex] || ""}
+              </th>
+            ))}
+          </tr>
         </thead>
         <tbody>
           {sheet.rows.map((row, rowIndex) => {
             const selected = rowIndex + 1 === headerRow;
+            if (selected) return null;
             return (
-              <tr key={rowIndex} className={selected ? "bg-primary/10" : "hover:bg-muted/30"}>
-                <th
-                  className={cn(
-                    "sticky left-0 z-20 border-b border-r border-border px-2 py-2 text-center font-medium",
-                    selected
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground",
-                  )}
-                >
+              <tr key={rowIndex} className="hover:bg-muted/30">
+                <th className="sticky left-0 z-20 border-b border-r border-border bg-muted px-2 py-2 text-center font-medium text-muted-foreground">
                   {rowIndex + 1}
                 </th>
                 {Array.from({ length: width }, (_, columnIndex) => (
                   <td
                     key={columnIndex}
-                    className={cn(
-                      "max-w-64 truncate border-b border-r border-border px-3 py-2",
-                      selected && "font-semibold text-primary",
-                    )}
+                    className="max-w-64 truncate border-b border-r border-border px-3 py-2"
                     title={row[columnIndex] ?? ""}
                   >
                     {row[columnIndex] || ""}

@@ -123,8 +123,8 @@ const initial: FormState = {
 };
 
 const initialPrinter: PrinterFormState = {
-  mode: "Simulation",
-  printerName: "TrackGRN Simulator",
+  mode: "WindowsSpooler",
+  printerName: "ZDesigner ZD230-203dpi ZPL",
   host: null,
   port: 9100,
   dpi: 203,
@@ -159,8 +159,11 @@ function ConfigurationPage() {
         ...data.importConfiguration,
       } as FormState["importConfiguration"],
     });
+    const supportedMode = ["WindowsSpooler", "RawTcp", "LocalAgent"].includes(data.printing.mode)
+      ? (data.printing.mode as PrinterFormState["mode"])
+      : "WindowsSpooler";
     setPrinterForm({
-      mode: data.printing.mode as PrinterFormState["mode"],
+      mode: supportedMode,
       printerName: data.printing.printerName,
       host: data.printing.host,
       port: data.printing.port,
@@ -193,7 +196,7 @@ function ConfigurationPage() {
   const printerTest = useMutation({
     mutationFn: testPrinter,
     onSuccess: (result) =>
-      toast.success(result.simulated ? "Test label simulated" : "Test label sent to printer", {
+      toast.success("Test label sent to printer", {
         description: `${result.labelUid} → ${result.printer} (${result.mode}, ${result.dpi} dpi)`,
       }),
     onError: (error) => toast.error("Test label print failed", { description: error.message }),
@@ -698,7 +701,6 @@ function ConfigurationPage() {
                   <SelectItem value="RawTcp">Network printer (IP / port 9100)</SelectItem>
                   <SelectItem value="LocalAgent">Print locally via installed Agent</SelectItem>
                   <SelectItem value="WindowsSpooler">USB or Windows shared printer</SelectItem>
-                  <SelectItem value="Simulation">Simulation (no physical print)</SelectItem>
                 </SelectContent>
               </Select>
             </Field>

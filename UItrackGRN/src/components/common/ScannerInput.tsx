@@ -10,13 +10,11 @@ export function ScannerInput({
   busy,
   hint = "Scan QR / Label UID",
   tone = "primary",
-  suggestion,
 }: {
   onScan: (code: string) => void;
   busy?: boolean;
   hint?: string;
   tone?: "primary" | "success";
-  suggestion?: string;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
@@ -72,7 +70,7 @@ export function ScannerInput({
             placeholder="LBL-00000000"
             className="num h-14 rounded-xl border-2 text-center text-lg tracking-widest sm:h-20 sm:text-2xl"
           />
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <div className="mt-3 flex">
             <Button
               onClick={submit}
               disabled={busy}
@@ -80,19 +78,6 @@ export function ScannerInput({
             >
               {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : "Lookup"}
             </Button>
-            {suggestion ? (
-              <Button
-                variant="outline"
-                className="num h-14 text-sm"
-                onClick={() => {
-                  setValue("");
-                  onScan(suggestion);
-                }}
-                disabled={busy}
-              >
-                Simulate {suggestion}
-              </Button>
-            ) : null}
           </div>
           <p className="mt-2 text-center text-xs text-muted-foreground">
             Hardware keyboard-wedge ready · press Enter to submit

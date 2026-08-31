@@ -233,7 +233,8 @@ public sealed class ImportsController(
                     x.ExpiryDate, x.ExpectedLabelCount, x.GrnHeader.VendorCode, x.GrnHeader.VendorName,
                     x.GrnHeader.InvoiceNumber, x.GrnHeader.InvoiceDate,
                     x.Labels.Where(l => l.IsActive && l.LabelStatus == LabelStatus.Issued).Sum(l => (decimal?)l.LabelQuantity) ?? 0,
-                    x.Labels.Any(l => l.IsActive && l.LabelStatus != LabelStatus.Generated)))
+                    x.Labels.Any(l => l.IsActive && l.LabelStatus != LabelStatus.Generated
+                        || l.PrintCount > 0 || l.InwardedAt != null || l.IssuedAt != null)))
                 .ToListAsync(cancellationToken);
             foreach (var line in found) existing[line.BusinessKeyHash] = line;
         }
@@ -426,7 +427,7 @@ public sealed class ImportsController(
                         ? RevisionValidationStatus.Warning : RevisionValidationStatus.Valid
                 };
                 dbContext.GrnLines.Add(line);
-                if (autoLabels) GenerateLabels(line, row.ReceivedQuantity, 0, batch.UploadedById);
+                if (autoLabels) GenerateLabels(line, row.ReceivedQuantity, 0, batch.UploadedById, row);
             }
             else
             {
@@ -445,7 +446,7 @@ public sealed class ImportsController(
                 }
                 var old = Snapshot(line);
                 var oldVersion = line.RecordVersion;
-                if (autoLabels && !ReconcileLabels(line, row.ReceivedQuantity, batch.UploadedById, out var reconciliationError))
+                if (autoLabels && !ReconcileLabels(line, row, batch.UploadedById, out var reconciliationError))
                 {
                     result.ResultType = ImportResultType.Rejected;
                     result.Message = reconciliationError;
@@ -509,10 +510,17 @@ public sealed class ImportsController(
             if (!sourceNameMatches)
                 warnings.Add($"Supplier name '{row.VendorName}' does not match vendor master {vendor.VendorCode} ({vendor.VendorName}); master name will be used.");
         }
+        if (material?.DefaultPackingStandard is > 0 && row.PackingStandard > 0
+            && material.DefaultPackingStandard.Value != row.PackingStandard)
+        {
+            warnings.Add($"Material master pack quantity {material.DefaultPackingStandard.Value:0.####} overrides source pack quantity {row.PackingStandard:0.####}.");
+        }
         return row with
         {
             MaterialDescription = string.IsNullOrWhiteSpace(row.MaterialDescription) ? material?.Description ?? string.Empty : row.MaterialDescription,
-            PackingStandard = row.PackingStandard > 0 ? row.PackingStandard : material?.DefaultPackingStandard ?? 0,
+            PackingStandard = material?.DefaultPackingStandard is > 0
+                ? material.DefaultPackingStandard.Value
+                : row.PackingStandard,
             Uom = string.IsNullOrWhiteSpace(row.Uom) ? material?.Uom ?? "PCS" : row.Uom.ToUpperInvariant(),
             Plant = string.IsNullOrWhiteSpace(row.Plant) ? "1000" : row.Plant,
             StorageLocation = string.IsNullOrWhiteSpace(row.StorageLocation) ? "RM01" : row.StorageLocation,
@@ -582,14 +590,19 @@ public sealed class ImportsController(
         return (resultType, $"{message} {string.Join(" ", candidate.Warnings)}");
     }
 
-    private bool ReconcileLabels(GrnLine line, decimal newQuantity, Guid userId, out string? error)
+    private bool ReconcileLabels(GrnLine line, NormalizedImportRow row, Guid userId, out string? error)
     {
         error = null;
+        if (line.PackingStandard != row.PackingStandard)
+            return RepackGeneratedLabels(line, row, userId, out error);
+
+        var newQuantity = row.ReceivedQuantity;
         var active = line.Labels.Where(x => x.IsActive && x.LabelStatus != LabelStatus.Cancelled).OrderByDescending(x => x.SequenceNumber).ToList();
         var total = active.Sum(x => x.LabelQuantity);
         if (newQuantity > total)
         {
-            GenerateLabels(line, newQuantity - total, active.Count == 0 ? 0 : active.Max(x => x.SequenceNumber), userId);
+            var highestSequence = line.Labels.Count == 0 ? 0 : line.Labels.Max(x => x.SequenceNumber);
+            GenerateLabels(line, newQuantity - total, highestSequence, userId, row);
             return true;
         }
         var excess = total - newQuantity;
@@ -616,17 +629,63 @@ public sealed class ImportsController(
         return false;
     }
 
-    private void GenerateLabels(GrnLine line, decimal quantity, int startSequence, Guid userId)
+    private bool RepackGeneratedLabels(GrnLine line, NormalizedImportRow row, Guid userId, out string? error)
     {
-        var quantities = labelQuantityCalculator.Calculate(quantity, line.PackingStandard);
+        error = null;
+        var active = line.Labels.Where(x => x.IsActive && x.LabelStatus != LabelStatus.Cancelled)
+            .OrderBy(x => x.SequenceNumber).ToList();
+        if (line.Labels.Any(x => x.PrintCount > 0 || x.InwardedAt != null || x.IssuedAt != null)
+            || active.Any(x => x.LabelStatus != LabelStatus.Generated))
+        {
+            error = "Pack quantity cannot change after a label has been printed or processed.";
+            return false;
+        }
+
+        var desired = labelQuantityCalculator.Calculate(row.ReceivedQuantity, row.PackingStandard);
+        var retained = Math.Min(active.Count, desired.Count);
+        for (var index = 0; index < retained; index++)
+        {
+            var label = active[index];
+            label.LabelQuantity = desired[index];
+            label.Uom = row.Uom;
+            label.QrPayload = LabelIdentity.CreateQrPayload(label.LabelUid, row.GrnNumber,
+                row.MaterialNumber, label.LabelQuantity, row.Uom, row.GrnDate, label.GeneratedAt);
+        }
+
+        foreach (var label in active.Skip(desired.Count))
+        {
+            label.LabelStatus = LabelStatus.Cancelled;
+            label.IsActive = false;
+            AddTransaction(label, line, TransactionType.Cancel, userId, LabelStatus.Generated,
+                LabelStatus.Cancelled, "Cancelled after material master pack quantity changed");
+        }
+
+        if (desired.Count > active.Count)
+        {
+            var remainingQuantity = desired.Skip(active.Count).Sum();
+            var highestSequence = line.Labels.Count == 0 ? 0 : line.Labels.Max(x => x.SequenceNumber);
+            GenerateLabels(line, remainingQuantity, highestSequence, userId, row);
+        }
+
+        return true;
+    }
+
+    private void GenerateLabels(GrnLine line, decimal quantity, int startSequence, Guid userId, NormalizedImportRow row)
+    {
+        var quantities = labelQuantityCalculator.Calculate(quantity, row.PackingStandard);
+        var generatedAt = DateTimeOffset.UtcNow;
         for (var index = 0; index < quantities.Count; index++)
         {
             var sequence = startSequence + index + 1;
-            var uid = $"LBL-{DateTime.UtcNow:yyMMdd}-{Guid.NewGuid():N}"[..24].ToUpperInvariant();
+            var labelId = Guid.NewGuid();
+            var uid = LabelIdentity.FromId(labelId);
             var label = new MaterialLabel
             {
-                LabelUid = uid, GrnLine = line, SequenceNumber = sequence, LabelQuantity = quantities[index],
-                Uom = line.Uom, QrPayload = uid, LabelStatus = LabelStatus.Generated, GeneratedById = userId
+                Id = labelId, LabelUid = uid, GrnLine = line, SequenceNumber = sequence,
+                LabelQuantity = quantities[index], Uom = row.Uom,
+                QrPayload = LabelIdentity.CreateQrPayload(uid, row.GrnNumber, row.MaterialNumber,
+                    quantities[index], row.Uom, row.GrnDate, generatedAt),
+                LabelStatus = LabelStatus.Generated, GeneratedById = userId, GeneratedAt = generatedAt
             };
             dbContext.MaterialLabels.Add(label);
             AddTransaction(label, line, TransactionType.LabelGenerated, userId, LabelStatus.Generated, LabelStatus.Generated, "Auto-generated from SAP import");

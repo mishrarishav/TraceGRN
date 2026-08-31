@@ -33,7 +33,7 @@ public sealed class OperationsController(
         var issued = await labels.Where(x => x.LabelStatus == LabelStatus.Issued).SumAsync(x => (decimal?)x.LabelQuantity, cancellationToken) ?? 0;
         var issuedToday = await labels.Where(x => x.IssuedAt >= DateTimeOffset.UtcNow.Date).SumAsync(x => (decimal?)x.LabelQuantity, cancellationToken) ?? 0;
         var labelCount = await labels.CountAsync(cancellationToken);
-        var pending = await labels.CountAsync(x => x.LabelStatus == LabelStatus.Printed || x.LabelStatus == LabelStatus.Generated, cancellationToken);
+        var pending = await labels.CountAsync(x => x.LabelStatus == LabelStatus.Generated, cancellationToken);
         var warningCount = await todayImports.SumAsync(x => (int?)x.WarningRows + x.RejectedRows, cancellationToken) ?? 0;
         var kpis = new object[]
         {
@@ -43,7 +43,7 @@ public sealed class OperationsController(
             Kpi("available", "Available Quantity", received - issued, "Quantity not issued to production", "warehouse"),
             Kpi("issued", "Issued Today", issuedToday, "Quantity issued today", "forklift"),
             Kpi("labels", "Labels Generated", labelCount, "Active pack labels", "qr"),
-            Kpi("pending", "Pending Inward", pending, "Generated or printed labels awaiting inward", "clock"),
+            Kpi("pending", "Pending Print", pending, "Generated labels waiting for physical printing", "clock"),
             Kpi("warnings", "Import Warnings", warningCount, "Rows needing review today", "alert")
         };
 
@@ -86,10 +86,12 @@ public sealed class OperationsController(
         if (Enum.TryParse<LabelStatus>(status, true, out var parsed)) query = query.Where(x => x.LabelStatus == parsed);
         if (!string.IsNullOrWhiteSpace(grn)) query = query.Where(x => x.GrnLine.GrnHeader.GrnNumber == grn.Trim());
         var rows = await query.OrderByDescending(x => x.GeneratedAt).Take(Math.Clamp(limit, 1, 2000))
-            .Select(x => new LabelRow(x.LabelUid, x.GrnLine.GrnHeader.GrnNumber, x.GrnLine.Material.MaterialNumber,
+            .Select(x => new LabelRow(x.LabelUid, x.QrPayload, x.GrnLine.GrnHeader.GrnNumber, x.GrnLine.Material.MaterialNumber,
                 x.GrnLine.Material.Description, x.LabelQuantity, x.Uom, x.GrnLine.BatchNumber ?? "—",
-                x.GrnLine.GrnHeader.GrnDate, x.SequenceNumber, x.GrnLine.Labels.Count(l => l.IsActive),
-                x.LabelStatus, x.PrintCount, x.GeneratedAt, x.IssuedAt,
+                x.GrnLine.GrnHeader.GrnDate,
+                x.GrnLine.Labels.Count(l => l.IsActive && l.SequenceNumber <= x.SequenceNumber),
+                x.GrnLine.Labels.Count(l => l.IsActive),
+                x.LabelStatus, x.PrintCount, x.GeneratedAt, x.InwardedAt, x.IssuedAt,
                 x.IssuedById == null ? null : dbContext.Users.Where(u => u.Id == x.IssuedById).Select(u => u.FullName).FirstOrDefault(),
                 x.RowVersion, x.Id, x.GrnLineId, x.GrnLine.MaterialId)).ToListAsync(cancellationToken);
         return Ok(rows.Select(ToLabelDto));
@@ -125,7 +127,7 @@ public sealed class OperationsController(
             stationId = await dbContext.Stations.Where(x => x.StationCode == request.StationCode && x.IsActive && (x.Type == StationType.Inward || x.Type == StationType.General)).Select(x => (Guid?)x.Id).SingleOrDefaultAsync(cancellationToken);
 
         var now = DateTimeOffset.UtcNow;
-        var affected = await dbContext.MaterialLabels.Where(x => x.LabelUid == request.LabelUid && x.IsActive
+        var affected = await dbContext.MaterialLabels.Where(x => x.LabelUid == row.LabelUid && x.IsActive
                 && (x.LabelStatus == LabelStatus.Generated || x.LabelStatus == LabelStatus.Printed))
             .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.LabelStatus, LabelStatus.Inwarded)
                 .SetProperty(x => x.InwardedAt, now).SetProperty(x => x.InwardedById, requestContext.UserId), cancellationToken);
@@ -156,7 +158,7 @@ public sealed class OperationsController(
         if (station is null) return ValidationProblem(new Dictionary<string, string[]> { ["stationCode"] = ["An active issue station is required."] });
 
         var now = DateTimeOffset.UtcNow;
-        var affected = await dbContext.MaterialLabels.Where(x => x.LabelUid == request.LabelUid && x.IsActive && x.LabelStatus == LabelStatus.Inwarded)
+        var affected = await dbContext.MaterialLabels.Where(x => x.LabelUid == row.LabelUid && x.IsActive && x.LabelStatus == LabelStatus.Inwarded)
             .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.LabelStatus, LabelStatus.Issued)
                 .SetProperty(x => x.IssuedAt, now).SetProperty(x => x.IssuedById, requestContext.UserId), cancellationToken);
         if (affected != 1) return ScanError("ALREADY_ISSUED", "Label was already issued by another scan", 409);
@@ -176,7 +178,7 @@ public sealed class OperationsController(
     [HttpPost("/api/labels/generate")]
     public async Task<IActionResult> GenerateLabels(GenerateLabelsRequest request, CancellationToken cancellationToken)
     {
-        var line = await dbContext.GrnLines.Include(x => x.Material).Include(x => x.Labels)
+        var line = await dbContext.GrnLines.Include(x => x.Material).Include(x => x.GrnHeader).Include(x => x.Labels)
             .SingleOrDefaultAsync(x => x.Id == request.GrnLineId && x.IsActive, cancellationToken);
         if (line is null) return NotFound();
         var activeTotal = line.Labels.Where(x => x.IsActive && x.LabelStatus != LabelStatus.Cancelled).Sum(x => x.LabelQuantity);
@@ -189,11 +191,14 @@ public sealed class OperationsController(
         var uids = new List<string>();
         for (var index = 0; index < quantities.Count; index++)
         {
-            var uid = $"LBL-{DateTime.UtcNow:yyMMdd}-{Guid.NewGuid():N}"[..24].ToUpperInvariant();
+            var labelId = Guid.NewGuid();
+            var uid = LabelIdentity.FromId(labelId);
             var label = new MaterialLabel
             {
-                LabelUid = uid, GrnLineId = line.Id, SequenceNumber = start + index + 1,
-                LabelQuantity = quantities[index], Uom = line.Uom, QrPayload = uid,
+                Id = labelId, LabelUid = uid, GrnLineId = line.Id, SequenceNumber = start + index + 1,
+                LabelQuantity = quantities[index], Uom = line.Uom,
+                QrPayload = LabelIdentity.CreateQrPayload(uid, line.GrnHeader.GrnNumber,
+                    line.Material.MaterialNumber, quantities[index], line.Uom, line.GrnHeader.GrnDate, now),
                 LabelStatus = LabelStatus.Generated, GeneratedById = requestContext.UserId, GeneratedAt = now
             };
             dbContext.MaterialLabels.Add(label);
@@ -221,7 +226,7 @@ public sealed class OperationsController(
         var next = request.Action.Trim().ToLowerInvariant() switch
         {
             "block" => LabelStatus.Blocked,
-            "unblock" when label.LabelStatus == LabelStatus.Blocked => label.PrintCount > 0 ? LabelStatus.Printed : LabelStatus.Generated,
+            "unblock" when label.LabelStatus == LabelStatus.Blocked => label.PrintCount > 0 ? LabelStatus.Inwarded : LabelStatus.Generated,
             "cancel" => LabelStatus.Cancelled,
             _ => (LabelStatus?)null
         };
@@ -246,7 +251,7 @@ public sealed class OperationsController(
         return Ok(new { labelUid, status = StatusName(next.Value) });
     }
 
-    [Authorize(Roles = "Admin,StoreManager")]
+    [Authorize(Roles = "Admin,StoreManager,StoreOperator")]
     [HttpPost("/api/labels/{labelUid}/print")]
     public async Task<IActionResult> Print(string labelUid, PrintRequest request, CancellationToken cancellationToken)
     {
@@ -256,14 +261,23 @@ public sealed class OperationsController(
             return ScanError(row.LabelStatus == LabelStatus.Blocked ? "BLOCKED" : "CANCELLED", $"{row.LabelStatus} label cannot be printed", 409);
         if (row.PrintCount > 0 && string.IsNullOrWhiteSpace(request.Reason))
             return ValidationProblem(new Dictionary<string, string[]> { ["reason"] = ["A reason is required for reprint."] });
+        var qrPayload = LabelIdentity.CreateQrPayload(row.LabelUid, row.GrnNumber, row.MaterialNumber,
+            row.LabelQuantity, row.Uom, row.GrnDate, row.GeneratedAt);
         var result = await printer.PrintAsync(new LabelPrintJob(row.LabelUid, row.MaterialNumber, row.Description,
-            row.GrnNumber, row.Batch, row.LabelQuantity, row.Uom, row.SequenceNumber, row.SequenceTotal), cancellationToken);
-        var label = await dbContext.MaterialLabels.SingleAsync(x => x.LabelUid == labelUid, cancellationToken);
+            row.GrnNumber, row.Batch, row.LabelQuantity, row.Uom, row.SequenceNumber, row.SequenceTotal,
+            qrPayload), cancellationToken);
+        var label = await dbContext.MaterialLabels.SingleAsync(x => x.LabelUid == row.LabelUid, cancellationToken);
         var previousStatus = label.LabelStatus;
+        label.QrPayload = qrPayload;
         label.PrintedAt = DateTimeOffset.UtcNow;
         label.LastPrintedById = requestContext.UserId;
         label.PrintCount++;
-        if (label.LabelStatus == LabelStatus.Generated) label.LabelStatus = LabelStatus.Printed;
+        if (label.LabelStatus is LabelStatus.Generated or LabelStatus.Printed)
+        {
+            label.LabelStatus = LabelStatus.Inwarded;
+            label.InwardedAt ??= label.PrintedAt;
+            label.InwardedById ??= requestContext.UserId;
+        }
         var transactionType = label.PrintCount == 1 ? TransactionType.LabelPrinted : TransactionType.Reprint;
         dbContext.MaterialTransactions.Add(Transaction(row, transactionType, previousStatus, label.LabelStatus,
             new ScanOperationRequest(labelUid, request.StationCode, request.Reason), null, label.PrintedAt.Value));
@@ -275,7 +289,7 @@ public sealed class OperationsController(
         return Ok(new { ok = true, labelUid, label.PrintCount, status = StatusName(label.LabelStatus), result.Mode, result.Printer, result.Simulated });
     }
 
-    [Authorize(Roles = "Admin,StoreManager")]
+    [Authorize(Roles = "Admin,StoreManager,StoreOperator")]
     [HttpPost("/api/labels/print-batch")]
     public async Task<IActionResult> PrintBatch(BatchPrintRequest request, CancellationToken cancellationToken)
     {
@@ -321,7 +335,9 @@ public sealed class OperationsController(
         {
             id = x.TransactionNumber, timestamp = x.Timestamp.ToString("O"), type = TransactionName(x.TransactionType),
             labelUid = x.Label.LabelUid, grnNumber = x.GrnLine.GrnHeader.GrnNumber,
-            materialNumber = x.Material.MaterialNumber, quantity = x.Quantity,
+            grnDate = x.GrnLine.GrnHeader.GrnDate.ToString("yyyy-MM-dd"),
+            materialNumber = x.Material.MaterialNumber, description = x.Material.Description,
+            labelPrintedAt = x.Label.PrintedAt?.ToString("O"), quantity = x.Quantity, uom = x.Uom,
             station = x.Station?.StationCode ?? "SYSTEM", @operator = x.User.FullName, status = StatusName(x.NewStatus)
         }));
     }
@@ -331,22 +347,36 @@ public sealed class OperationsController(
     {
         if (string.IsNullOrWhiteSpace(q)) return BadRequest();
         var term = q.Trim();
+        var labelUid = LabelIdentity.ExtractUid(term) ?? term;
         var label = await dbContext.MaterialLabels.AsNoTracking().Include(x => x.GrnLine).ThenInclude(x => x.GrnHeader)
             .Include(x => x.GrnLine).ThenInclude(x => x.Material)
-            .Where(x => x.IsActive && (x.LabelUid == term || x.GrnLine.GrnHeader.GrnNumber == term
+            .Where(x => x.IsActive && (x.LabelUid == labelUid || x.QrPayload == term || x.GrnLine.GrnHeader.GrnNumber == term
                 || x.GrnLine.Material.MaterialNumber == term || x.GrnLine.BatchNumber == term))
             .OrderByDescending(x => x.GeneratedAt).FirstOrDefaultAsync(cancellationToken);
         if (label is null) return NotFound();
         var txns = await dbContext.MaterialTransactions.AsNoTracking().Where(x => x.LabelId == label.Id)
             .Include(x => x.User).Include(x => x.Station).OrderBy(x => x.Timestamp).ToListAsync(cancellationToken);
-        var steps = txns.Select(x => new
+        var traceEvents = txns
+            .Where(x => x.TransactionType is not TransactionType.LabelGenerated and not TransactionType.LabelPrinted)
+            .Select(x => new TraceEvent(x.Timestamp, TransactionTitle(x.TransactionType), x.User.FullName,
+                x.Station?.StationCode ?? x.DeviceId ?? "SYSTEM", StatusName(x.NewStatus)))
+            .ToList();
+        var printedLifecycle = txns.LastOrDefault(x => x.TransactionType == TransactionType.LabelPrinted);
+        var generatedLifecycle = txns.FirstOrDefault(x => x.TransactionType == TransactionType.LabelGenerated);
+        var labelLifecycle = printedLifecycle ?? generatedLifecycle;
+        var lifecycleTitle = printedLifecycle is not null || label.PrintCount > 0
+            ? "Label Generated & Printed"
+            : "Label Generated";
+        traceEvents.Add(labelLifecycle is null
+            ? new TraceEvent(label.GeneratedAt, lifecycleTitle, "System", "LABEL", StatusName(label.LabelStatus))
+            : new TraceEvent(labelLifecycle.Timestamp, lifecycleTitle, labelLifecycle.User.FullName,
+                labelLifecycle.Station?.StationCode ?? labelLifecycle.DeviceId ?? "LABEL", StatusName(labelLifecycle.NewStatus)));
+        var steps = traceEvents.OrderBy(x => x.Timestamp).Select(x => new
         {
-            title = TransactionTitle(x.TransactionType), date = x.Timestamp.ToLocalTime().ToString("dd MMM yyyy"),
-            time = x.Timestamp.ToLocalTime().ToString("hh:mm tt"), user = x.User.FullName,
-            station = x.Station?.StationCode ?? x.DeviceId ?? "SYSTEM", status = StatusName(x.NewStatus)
-        }).ToList<object>();
-        if (steps.Count == 0)
-            steps.Add(new { title = "Label Generated", date = label.GeneratedAt.ToLocalTime().ToString("dd MMM yyyy"), time = label.GeneratedAt.ToLocalTime().ToString("hh:mm tt"), user = "System", station = "LABEL", status = "Generated" });
+            title = x.Title, date = x.Timestamp.ToLocalTime().ToString("dd MMM yyyy"),
+            time = x.Timestamp.ToLocalTime().ToString("hh:mm tt"), user = x.User,
+            station = x.Station, status = x.Status
+        }).ToList();
         return Ok(new
         {
             label.LabelUid, label.GrnLine.Material.MaterialNumber, label.GrnLine.Material.Description,
@@ -390,6 +420,107 @@ public sealed class OperationsController(
                 _ => "Updated"
             }, note = $"Revision {x.PreviousVersion} → {x.NewVersion}"
         }));
+    }
+
+    [Authorize(Roles = "Admin,StoreManager,Viewer")]
+    [HttpGet("/api/reports/issues/options")]
+    public async Task<IActionResult> IssueReportOptions(CancellationToken cancellationToken)
+    {
+        var issues = dbContext.MaterialTransactions.AsNoTracking()
+            .Where(x => x.TransactionType == TransactionType.Issue);
+        var materials = await issues
+            .Select(x => new { id = x.MaterialId, x.Material.MaterialNumber, x.Material.Description })
+            .Distinct().OrderBy(x => x.MaterialNumber).ToListAsync(cancellationToken);
+        var issuers = await issues
+            .Select(x => new { id = x.UserId, name = x.User.FullName })
+            .Distinct().OrderBy(x => x.name).ToListAsync(cancellationToken);
+        return Ok(new { materials, issuers });
+    }
+
+    [Authorize(Roles = "Admin,StoreManager,Viewer")]
+    [HttpGet("/api/reports/issues")]
+    public async Task<IActionResult> IssueReport([FromQuery] DateTimeOffset? from = null,
+        [FromQuery] DateTimeOffset? toExclusive = null, [FromQuery] Guid? materialId = null,
+        [FromQuery] Guid? issuedById = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 25,
+        CancellationToken cancellationToken = default)
+    {
+        if (from.HasValue && toExclusive.HasValue && toExclusive.Value <= from.Value)
+            return ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["toExclusive"] = ["To date must be later than from date."]
+            });
+
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+        var query = dbContext.MaterialTransactions.AsNoTracking()
+            .Where(x => x.TransactionType == TransactionType.Issue);
+        if (from.HasValue) query = query.Where(x => x.Timestamp >= from.Value);
+        if (toExclusive.HasValue) query = query.Where(x => x.Timestamp < toExclusive.Value);
+        if (materialId.HasValue) query = query.Where(x => x.MaterialId == materialId.Value);
+        if (issuedById.HasValue) query = query.Where(x => x.UserId == issuedById.Value);
+
+        var total = await query.CountAsync(cancellationToken);
+        var raw = await query.OrderByDescending(x => x.Timestamp).ThenByDescending(x => x.TransactionNumber)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(x => new
+            {
+                x.TransactionNumber, x.Timestamp, x.TransactionType, x.Label.LabelUid,
+                x.GrnLine.GrnHeader.GrnNumber, x.GrnLine.GrnHeader.GrnDate,
+                x.Material.MaterialNumber, x.Material.Description, x.Label.PrintedAt,
+                x.Quantity, x.Uom, Station = x.Station == null ? null : x.Station.StationCode,
+                Operator = x.User.FullName, x.NewStatus
+            }).ToListAsync(cancellationToken);
+        var items = raw.Select(x => new
+        {
+            id = x.TransactionNumber, timestamp = x.Timestamp.ToString("O"), type = TransactionName(x.TransactionType),
+            labelUid = x.LabelUid, grnNumber = x.GrnNumber, grnDate = x.GrnDate.ToString("yyyy-MM-dd"),
+            materialNumber = x.MaterialNumber, description = x.Description,
+            labelPrintedAt = x.PrintedAt?.ToString("O"), quantity = x.Quantity, uom = x.Uom,
+            station = x.Station ?? "SYSTEM", @operator = x.Operator, status = StatusName(x.NewStatus)
+        }).ToList();
+        return Ok(new { page, pageSize, total, items });
+    }
+
+    [Authorize(Roles = "Admin,StoreManager,Viewer")]
+    [HttpGet("/api/reports/imports")]
+    public async Task<IActionResult> ImportReport([FromQuery] DateTimeOffset? from = null,
+        [FromQuery] DateTimeOffset? toExclusive = null, [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default)
+    {
+        if (from.HasValue && toExclusive.HasValue && toExclusive.Value <= from.Value)
+            return ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["toExclusive"] = ["To date must be later than from date."]
+            });
+
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+        var query = dbContext.ImportBatches.AsNoTracking().AsQueryable();
+        if (from.HasValue) query = query.Where(x => x.UploadedAt >= from.Value);
+        if (toExclusive.HasValue) query = query.Where(x => x.UploadedAt < toExclusive.Value);
+
+        var total = await query.CountAsync(cancellationToken);
+        var raw = await query.OrderByDescending(x => x.UploadedAt).ThenByDescending(x => x.Id)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(x => new
+            {
+                x.Id, x.FileName, x.UploadedAt, UploadedBy = x.UploadedBy.FullName,
+                x.TotalRows, x.NewRows, x.UpdatedRows, x.UnchangedRows, x.WarningRows,
+                x.RejectedRows, x.ImportStatus
+            }).ToListAsync(cancellationToken);
+        var items = raw.Select(x => new
+        {
+            batchId = x.Id.ToString(), x.FileName, uploadedAt = x.UploadedAt.ToString("O"),
+            uploadedBy = x.UploadedBy, x.TotalRows, x.NewRows, updated = x.UpdatedRows,
+            unchanged = x.UnchangedRows, warnings = x.WarningRows, rejected = x.RejectedRows,
+            status = x.ImportStatus switch
+            {
+                ImportStatus.CompletedWithWarnings => "Warning",
+                ImportStatus.Pending or ImportStatus.Processing => "Pending",
+                _ => x.ImportStatus.ToString()
+            }
+        }).ToList();
+        return Ok(new { page, pageSize, total, items });
     }
 
     [HttpGet("/api/reports")]
@@ -530,21 +661,29 @@ public sealed class OperationsController(
         return File(stream.ToArray(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"{safeName}.xlsx");
     }
 
-    private async Task<LabelRow?> LoadLabel(string uid, CancellationToken cancellationToken) =>
-        await dbContext.MaterialLabels.AsNoTracking().Where(x => x.LabelUid == uid.Trim())
-            .Select(x => new LabelRow(x.LabelUid, x.GrnLine.GrnHeader.GrnNumber, x.GrnLine.Material.MaterialNumber,
+    private async Task<LabelRow?> LoadLabel(string uid, CancellationToken cancellationToken)
+    {
+        var rawValue = uid.Trim();
+        var labelUid = LabelIdentity.ExtractUid(rawValue) ?? rawValue;
+        return await dbContext.MaterialLabels.AsNoTracking()
+            .Where(x => x.LabelUid == labelUid || x.QrPayload == rawValue)
+            .Select(x => new LabelRow(x.LabelUid, x.QrPayload, x.GrnLine.GrnHeader.GrnNumber, x.GrnLine.Material.MaterialNumber,
                 x.GrnLine.Material.Description, x.LabelQuantity, x.Uom, x.GrnLine.BatchNumber ?? "—",
-                x.GrnLine.GrnHeader.GrnDate, x.SequenceNumber, x.GrnLine.Labels.Count(l => l.IsActive),
-                x.LabelStatus, x.PrintCount, x.GeneratedAt, x.IssuedAt,
+                x.GrnLine.GrnHeader.GrnDate,
+                x.GrnLine.Labels.Count(l => l.IsActive && l.SequenceNumber <= x.SequenceNumber),
+                x.GrnLine.Labels.Count(l => l.IsActive),
+                x.LabelStatus, x.PrintCount, x.GeneratedAt, x.InwardedAt, x.IssuedAt,
                 x.IssuedById == null ? null : dbContext.Users.Where(u => u.Id == x.IssuedById).Select(u => u.FullName).FirstOrDefault(),
                 x.RowVersion, x.Id, x.GrnLineId, x.GrnLine.MaterialId)).SingleOrDefaultAsync(cancellationToken);
+    }
 
     private static object ToLabelDto(LabelRow x) => new
     {
-        x.LabelUid, x.GrnNumber, x.MaterialNumber, x.Description, quantity = x.LabelQuantity, x.Uom,
+        x.LabelUid, x.QrPayload, x.GrnNumber, x.MaterialNumber, x.Description, quantity = x.LabelQuantity, x.Uom,
         batch = x.Batch, grnDate = x.GrnDate.ToString("yyyy-MM-dd"),
         binSequence = $"{x.SequenceNumber:D2} of {x.SequenceTotal}", status = StatusName(x.LabelStatus),
-        x.PrintCount, generatedAt = x.GeneratedAt.ToString("O"), issuedAt = x.IssuedAt?.ToString("O"),
+        x.PrintCount, generatedAt = x.GeneratedAt.ToString("O"), inwardedAt = x.InwardedAt?.ToString("O"),
+        issuedAt = x.IssuedAt?.ToString("O"),
         x.IssuedBy, x.GrnLineId, rowVersion = Convert.ToBase64String(x.RowVersion)
     };
 
@@ -598,11 +737,13 @@ public sealed class OperationsController(
         "Configuration" or "User" or "Station" or "Material" => "Admin", _ => entity
     };
 
-    private sealed record LabelRow(string LabelUid, string GrnNumber, string MaterialNumber, string Description,
+    private sealed record LabelRow(string LabelUid, string QrPayload, string GrnNumber, string MaterialNumber, string Description,
         decimal LabelQuantity, string Uom, string Batch, DateOnly GrnDate, int SequenceNumber,
         int SequenceTotal, LabelStatus LabelStatus, int PrintCount, DateTimeOffset GeneratedAt,
-        DateTimeOffset? IssuedAt, string? IssuedBy, byte[] RowVersion, Guid Id = default,
+        DateTimeOffset? InwardedAt, DateTimeOffset? IssuedAt, string? IssuedBy, byte[] RowVersion, Guid Id = default,
         Guid GrnLineId = default, Guid MaterialId = default);
+
+    private sealed record TraceEvent(DateTimeOffset Timestamp, string Title, string User, string Station, string Status);
 }
 
 public sealed record ScanOperationRequest(string LabelUid, string? StationCode = null, string? Remarks = null, string? DeviceId = null);

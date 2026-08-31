@@ -414,7 +414,7 @@ export const issueMaterial = (labelUid: string, stationCode: string) =>
   });
 
 export const printLabel = (labelUid: string, reason?: string, stationCode?: string) =>
-  apiRequest<{ ok: true; simulated: boolean; printer: string; printCount: number }>(
+  apiRequest<{ ok: true; printer: string; printCount: number; status: string }>(
     `/labels/${encodeURIComponent(labelUid)}/print`,
     { method: "POST", body: JSON.stringify({ reason, stationCode }) },
   );
@@ -440,6 +440,65 @@ export const searchTraceability = async (query: string): Promise<TraceResult | n
 
 export const getReports = () =>
   apiRequest<{ id: string; name: string; description: string; icon: string }[]>("/reports");
+
+export interface ReportPage<T> {
+  page: number;
+  pageSize: number;
+  total: number;
+  items: T[];
+}
+
+export interface IssueReportOptions {
+  materials: { id: string; materialNumber: string; description: string }[];
+  issuers: { id: string; name: string }[];
+}
+
+export interface IssueReportFilters {
+  from?: string;
+  toExclusive?: string;
+  materialId?: string;
+  issuedById?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface ImportReportRow {
+  batchId: string;
+  fileName: string;
+  uploadedAt: string;
+  uploadedBy: string;
+  totalRows: number;
+  newRows: number;
+  updated: number;
+  unchanged: number;
+  warnings: number;
+  rejected: number;
+  status: string;
+}
+
+export interface ImportReportFilters {
+  from?: string;
+  toExclusive?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+function reportQuery(filters: Record<string, string | number | undefined>) {
+  const query = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  });
+  return query.toString();
+}
+
+export const getIssueReportOptions = () =>
+  apiRequest<IssueReportOptions>("/reports/issues/options");
+
+export const getIssueReport = (filters: IssueReportFilters) =>
+  apiRequest<ReportPage<MaterialTransaction>>(`/reports/issues?${reportQuery({ ...filters })}`);
+
+export const getImportReport = (filters: ImportReportFilters) =>
+  apiRequest<ReportPage<ImportReportRow>>(`/reports/imports?${reportQuery({ ...filters })}`);
 
 export async function downloadReport(
   reportId: string,
@@ -529,7 +588,6 @@ export interface PrinterTestResult {
   labelUid: string;
   mode: string;
   printer: string;
-  simulated: boolean;
   dpi: number;
 }
 
@@ -537,7 +595,7 @@ export const testPrinter = () =>
   apiRequest<PrinterTestResult>("/configuration/printer/test", { method: "POST" });
 
 export interface PrinterConfigurationRequest {
-  mode: "Simulation" | "WindowsSpooler" | "RawTcp" | "LocalAgent";
+  mode: "WindowsSpooler" | "RawTcp" | "LocalAgent";
   printerName: string;
   host: string | null;
   port: number;

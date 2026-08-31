@@ -114,7 +114,7 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
     }
 
     [Fact]
-    public async Task Import_inward_issue_and_printer_simulation_persist_to_sql_server()
+    public async Task Import_print_as_inward_and_issue_persist_to_sql_server()
     {
         using var client = await factory.CreateAuthenticatedClient();
         var identity = $"E2E{Guid.NewGuid():N}"[..14].ToUpperInvariant();
@@ -123,19 +123,25 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
         var labels = await client.GetFromJsonAsync<List<LabelDto>>($"/api/labels?grn={imported.GrnNumber}");
         var label = Assert.Single(labels!);
         Assert.Equal("Generated", label.Status);
+        using var beforePrintTrace = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/traceability?q={Uri.EscapeDataString(label.LabelUid)}"));
+        var beforePrintTitles = beforePrintTrace.RootElement.GetProperty("steps").EnumerateArray()
+            .Select(step => step.GetProperty("title").GetString()).ToList();
+        Assert.Contains("Label Generated", beforePrintTitles);
+        Assert.DoesNotContain("Label Generated & Printed", beforePrintTitles);
 
         var print = await client.PostAsJsonAsync($"/api/labels/{label.LabelUid}/print", new { reason = "SQL integration test" });
         Assert.Equal(HttpStatusCode.OK, print.StatusCode);
         var printResult = await print.Content.ReadFromJsonAsync<PrintDto>();
         Assert.True(printResult!.Simulated);
-
-        var inward = await client.PostAsJsonAsync("/api/inward", new
-        {
-            labelUid = label.LabelUid,
-            stationCode = "STORE-INWARD-01",
-            deviceId = "SQL-TEST-SCANNER"
-        });
-        Assert.Equal(HttpStatusCode.OK, inward.StatusCode);
+        Assert.Equal("Inwarded", printResult.Status);
+        using var afterPrintTrace = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/traceability?q={Uri.EscapeDataString(label.LabelUid)}"));
+        var afterPrintTitles = afterPrintTrace.RootElement.GetProperty("steps").EnumerateArray()
+            .Select(step => step.GetProperty("title").GetString()).ToList();
+        Assert.Contains("Label Generated & Printed", afterPrintTitles);
+        Assert.DoesNotContain("Label Generated", afterPrintTitles);
+        Assert.DoesNotContain("Label Printed", afterPrintTitles);
 
         var issue = await client.PostAsJsonAsync("/api/issues", new
         {
@@ -151,7 +157,7 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
         Assert.Equal(LabelStatus.Issued, stored.LabelStatus);
         Assert.Equal(1, stored.PrintCount);
         Assert.Equal(1, await db.MaterialTransactions.CountAsync(x => x.LabelId == stored.Id && x.TransactionType == TransactionType.Issue));
-        Assert.True(await db.AuditLogs.CountAsync(x => x.EntityId == label.LabelUid) >= 3);
+        Assert.True(await db.AuditLogs.CountAsync(x => x.EntityId == label.LabelUid) >= 2);
     }
 
     [Fact]
@@ -325,13 +331,13 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
     }
 
     [Fact]
-    public async Task Business_csv_headers_commit_invoice_vendor_bin_dates_and_expected_labels()
+    public async Task Business_csv_uses_material_master_pack_quantity_for_label_count()
     {
         using var client = await factory.CreateAuthenticatedClient();
         var grn = $"7{DateTime.UtcNow.Ticks.ToString()[^9..]}";
         var content = string.Join('\n',
             "Gr No,Gr date,Material,Material Description,Quantity,UOM,Vendor,Invo No,Inv Date,Sup Name,Bin loc,Mfg date,Exp Date,Pack Qty,No of Labels to print",
-            $"{grn},03.08.2025,M06030952,COMPRESSION BUMPER,\"1,000\",PC,1094852,2526KG0208,02.08.2025,Kumar Automates,210,01.08.2025,01.08.2027,200,5");
+            $"{grn},03.08.2025,M06030952,COMPRESSION BUMPER,\"1,000\",PC,1094852,2526KG0208,02.08.2025,Kumar Automates,210,01.08.2025,01.08.2027,333,5");
         using var form = new MultipartFormDataContent();
         using var file = new ByteArrayContent(Encoding.UTF8.GetBytes(content));
         file.Headers.ContentType = MediaTypeHeaderValue.Parse("text/csv");
@@ -341,11 +347,14 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
         Assert.True(previewResponse.StatusCode == HttpStatusCode.OK, await previewResponse.Content.ReadAsStringAsync());
         using var previewJson = JsonDocument.Parse(await previewResponse.Content.ReadAsStringAsync());
         var previewRow = previewJson.RootElement.GetProperty("rows")[0];
-        Assert.Equal("New", previewRow.GetProperty("status").GetString());
+        Assert.Equal("Warning", previewRow.GetProperty("status").GetString());
+        Assert.Contains("Material master pack quantity 200 overrides source pack quantity 333",
+            previewRow.GetProperty("reason").GetString());
         Assert.Equal(1000m, previewRow.GetProperty("quantity").GetDecimal());
         Assert.Equal("1094852", previewRow.GetProperty("vendorCode").GetString());
         Assert.Equal("2526KG0208", previewRow.GetProperty("invoiceNumber").GetString());
         Assert.Equal("210", previewRow.GetProperty("binLocation").GetString());
+        Assert.Equal(200m, previewRow.GetProperty("packingStandard").GetDecimal());
         Assert.Equal(5, previewRow.GetProperty("expectedLabelCount").GetInt32());
 
         var batchId = previewJson.RootElement.GetProperty("batch").GetProperty("batchId").GetString();
@@ -365,9 +374,51 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
         Assert.Equal("210", line.BinLocation);
         Assert.Equal(new DateOnly(2025, 8, 1), line.ManufacturingDate);
         Assert.Equal(new DateOnly(2027, 8, 1), line.ExpiryDate);
+        Assert.Equal(200m, line.PackingStandard);
         Assert.Equal(5, line.ExpectedLabelCount);
         Assert.Equal(5, line.Labels.Count);
         Assert.All(line.Labels, label => Assert.Equal(200m, label.LabelQuantity));
+    }
+
+    [Fact]
+    public async Task Material_master_pack_update_resplits_unprinted_labels()
+    {
+        using var client = await factory.CreateAuthenticatedClient();
+        var identity = $"PACK{Guid.NewGuid():N}"[..14].ToUpperInvariant();
+        var materialNumber = $"M-{identity}";
+        var create = await client.PostAsJsonAsync("/api/materials", new
+        {
+            materialNumber,
+            description = $"Pack change {identity}",
+            uom = "PCS",
+            packingStandard = 100m,
+            isActive = true
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var materialId = (await create.Content.ReadFromJsonAsync<IdDto>())!.Id;
+
+        var imported = await ImportAndCommit(client, identity, 1_000m, 333m, materialNumber);
+        var before = await client.GetFromJsonAsync<List<LabelDto>>($"/api/labels?grn={imported.GrnNumber}");
+        Assert.Equal(10, before!.Count);
+
+        var update = await client.PutAsJsonAsync($"/api/materials/{materialId}", new
+        {
+            materialNumber,
+            description = $"Pack change {identity}",
+            uom = "PCS",
+            packingStandard = 200m,
+            isActive = true
+        });
+        Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TrackGrnDbContext>();
+        var line = await db.GrnLines.AsNoTracking().Include(x => x.Labels)
+            .SingleAsync(x => x.GrnHeader.GrnNumber == imported.GrnNumber);
+        var active = line.Labels.Where(x => x.IsActive).OrderBy(x => x.SequenceNumber).ToList();
+        Assert.Equal(200m, line.PackingStandard);
+        Assert.Equal(5, active.Count);
+        Assert.All(active, label => Assert.Equal(200m, label.LabelQuantity));
     }
 
     [Fact]
@@ -387,10 +438,11 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
         Assert.Contains(vendor.Aliases, alias => alias.AliasName == "Kamal CED");
     }
 
-    private static async Task<ImportedRow> ImportAndCommit(HttpClient client, string identity, decimal quantity, decimal packing)
+    private static async Task<ImportedRow> ImportAndCommit(HttpClient client, string identity,
+        decimal quantity, decimal packing, string? materialNumber = null)
     {
         var grn = $"9{DateTime.UtcNow.Ticks.ToString()[^9..]}";
-        var material = $"M-{identity}";
+        var material = materialNumber ?? $"M-{identity}";
         using var form = new MultipartFormDataContent();
         using var file = new ByteArrayContent(Workbook(grn, material, identity, quantity, packing));
         file.Headers.ContentType = MediaTypeHeaderValue.Parse("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -427,7 +479,7 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
 
     private sealed record ImportedRow(string GrnNumber, string MaterialNumber);
     private sealed record LabelDto(string LabelUid, string Status);
-    private sealed record PrintDto(bool Simulated);
+    private sealed record PrintDto(bool Simulated, string Status);
     private sealed record IdDto(Guid Id);
 }
 

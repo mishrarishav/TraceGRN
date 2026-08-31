@@ -1,188 +1,285 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Printer, QrCode, RefreshCw } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Circle,
+  Loader2,
+  Printer,
+  QrCode,
+  RefreshCw,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/PageHeader";
 import { DataTable, type Column } from "@/components/common/DataTable";
 import { StatusBadge } from "@/components/common/StatusBadge";
-import { FilterBar } from "@/components/common/FilterBar";
 import { ExportButton } from "@/components/common/ExportButton";
 import { LoadingSkeleton } from "@/components/common/LoadingSkeleton";
-import { StatCard } from "@/components/common/StatCard";
 import { QRPreview } from "@/components/common/QRPreview";
 import { ConfirmationDialog } from "@/components/common/ConfirmationDialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import {
-  getConfiguration,
-  getLabels,
-  printLabel,
-  printLabelBatch,
-  testPrinter,
-} from "@/services/api";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useBranding } from "@/hooks/use-branding";
+import { cn } from "@/lib/utils";
+import { getLabels, printLabel } from "@/services/api";
 import type { MaterialLabel } from "@/types";
 
 export const Route = createFileRoute("/_shell/labels")({
   head: () => ({
     meta: [
-      { title: "Label Management — TrackGRN" },
+      { title: "Label Material Inward — TrackGRN" },
       {
         name: "description",
-        content: "Generate, preview and reprint QR material labels with full print audit history.",
+        content: "Preview, batch print and inward SAP-imported material labels.",
       },
-      { property: "og:title", content: "Label Management — TrackGRN" },
-      { property: "og:description", content: "QR label generation and reprint control." },
+      { property: "og:title", content: "Label Material Inward — TrackGRN" },
+      {
+        property: "og:description",
+        content: "Batch print and inward SAP-imported material labels.",
+      },
     ],
   }),
   component: LabelsPage,
 });
 
+type BatchRowState = "queued" | "printing" | "completed" | "failed";
+
+interface BatchRowProgress {
+  state: BatchRowState;
+  message?: string;
+}
+
+function isAwaitingInward(label: MaterialLabel) {
+  return label.status === "Generated" || label.status === "Printed";
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unexpected printer error";
+}
+
 function LabelsPage() {
   const queryClient = useQueryClient();
+  const { branding } = useBranding();
   const { data = [], isLoading } = useQuery({ queryKey: ["labels"], queryFn: getLabels });
-  const { data: configuration } = useQuery({
-    queryKey: ["configuration"],
-    queryFn: getConfiguration,
-  });
   const [status, setStatus] = useState("All");
   const [selected, setSelected] = useState<MaterialLabel | null>(null);
   const [reprint, setReprint] = useState<MaterialLabel | null>(null);
-  const [cfg, setCfg] = useState({
-    showBatch: true,
-    showGrnDate: true,
-    showDescription: true,
-    showBin: true,
-  });
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchSource, setBatchSource] = useState<MaterialLabel[]>([]);
+  const [batchFrom, setBatchFrom] = useState(1);
+  const [batchTo, setBatchTo] = useState(1);
+  const [batchProgress, setBatchProgress] = useState<Record<string, BatchRowProgress>>({});
+
+  const filtered = useMemo(
+    () => data.filter((label) => status === "All" || label.status === status),
+    [data, status],
+  );
+  const active = selected
+    ? (filtered.find((label) => label.labelUid === selected.labelUid) ?? filtered[0] ?? null)
+    : (filtered[0] ?? null);
+  const batchSelection = useMemo(
+    () => batchSource.slice(Math.max(0, batchFrom - 1), Math.max(batchFrom, batchTo)),
+    [batchFrom, batchSource, batchTo],
+  );
+  const batchFinished = batchSelection.filter((label) => {
+    const state = batchProgress[label.labelUid]?.state;
+    return state === "completed" || state === "failed";
+  }).length;
+
+  const updateBatchRow = (labelUid: string, next: BatchRowProgress) => {
+    setBatchProgress((current) => ({ ...current, [labelUid]: next }));
+  };
+
   const batchPrint = useMutation({
-    mutationFn: (uids: string[]) => printLabelBatch(uids),
-    onSuccess: (result) => {
-      void queryClient.invalidateQueries({ queryKey: ["labels"] });
-      toast.success("Batch print dispatched", {
-        description: `${result.results.filter((item) => item.success).length} of ${result.requested} labels processed by the server printer adapter.`,
-      });
+    mutationFn: async (labels: MaterialLabel[]) => {
+      let completed = 0;
+      let failed = 0;
+
+      for (const label of labels) {
+        updateBatchRow(label.labelUid, { state: "printing" });
+        try {
+          await printLabel(
+            label.labelUid,
+            label.printCount > 0 ? "Batch reprint before material inward" : undefined,
+          );
+          updateBatchRow(label.labelUid, { state: "completed" });
+          completed += 1;
+        } catch (error) {
+          updateBatchRow(label.labelUid, { state: "failed", message: errorMessage(error) });
+          failed += 1;
+        }
+      }
+
+      return { completed, failed, requested: labels.length };
     },
-    onError: (error) => toast.error("Batch print failed", { description: error.message }),
-  });
-  const reprintMutation = useMutation({
-    mutationFn: (label: MaterialLabel) =>
-      printLabel(
-        label.labelUid,
-        label.printCount > 0 ? "Operator-confirmed damaged label reprint" : undefined,
-      ),
     onSuccess: (result) => {
-      void queryClient.invalidateQueries({ queryKey: ["labels"] });
-      const action = (reprint?.printCount ?? 0) > 0 ? "Reprint" : "Print";
-      toast.success(result.simulated ? `${action} simulated` : `${action} sent`, {
-        description: `${reprint?.labelUid ?? "Label"} → ${result.printer}`,
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["labels"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["inventory"] }),
+      ]);
+      if (result.failed > 0) {
+        toast.warning("Batch completed with exceptions", {
+          description: `${result.completed} of ${result.requested} labels were printed and inwarded. Review the red rows before retrying.`,
+        });
+      } else {
+        toast.success("Batch print and inward complete", {
+          description: `${result.completed} labels were printed and inwarded successfully.`,
+        });
+      }
+    },
+  });
+
+  const reprintMutation = useMutation({
+    mutationFn: async (label: MaterialLabel) => {
+      const isFirstPrint = label.printCount === 0;
+      const result = await printLabel(
+        label.labelUid,
+        isFirstPrint ? undefined : "Operator-confirmed damaged label reprint",
+      );
+
+      return { result, inwarded: isAwaitingInward(label) };
+    },
+    onSuccess: (outcome) => {
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["labels"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["inventory"] }),
+      ]);
+      toast.success(outcome.inwarded ? "Label printed and inwarded" : "Reprint sent", {
+        description: `${reprint?.labelUid ?? "Label"} → ${outcome.result.printer}`,
       });
       setReprint(null);
     },
-    onError: (error) => toast.error("Reprint failed", { description: error.message }),
-  });
-  const printerTest = useMutation({
-    mutationFn: testPrinter,
-    onSuccess: (result) =>
-      toast.success(result.simulated ? "Test label simulated" : "Test label sent to printer", {
-        description: `${result.labelUid} → ${result.printer} (${result.mode}, ${result.dpi} dpi)`,
-      }),
-    onError: (error) => toast.error("Test label print failed", { description: error.message }),
+    onError: (error) => toast.error("Label print failed", { description: error.message }),
   });
 
-  const filtered = data.filter((l) => status === "All" || l.status === status);
-  const active = selected ?? filtered[0] ?? null;
+  const openBatchPreview = () => {
+    const eligible = filtered.filter(isAwaitingInward);
+    if (eligible.length === 0) {
+      toast.info("No labels are awaiting print and inward in this view.");
+      return;
+    }
+
+    batchPrint.reset();
+    setBatchSource(eligible);
+    setBatchFrom(1);
+    setBatchTo(eligible.length);
+    setBatchProgress(
+      Object.fromEntries(eligible.map((label) => [label.labelUid, { state: "queued" }])),
+    );
+    setBatchOpen(true);
+  };
 
   const columns: Column<MaterialLabel>[] = [
     {
       key: "uid",
       header: "Label UID",
-      render: (l) => <span className="num font-semibold text-primary">{l.labelUid}</span>,
+      render: (label) => (
+        <span className="num whitespace-nowrap font-semibold text-primary">{label.labelUid}</span>
+      ),
     },
-    { key: "grn", header: "GRN", render: (l) => <span className="num">{l.grnNumber}</span> },
     {
-      key: "mat",
+      key: "grn",
+      header: "GRN",
+      render: (label) => <span className="num whitespace-nowrap">{label.grnNumber}</span>,
+    },
+    {
+      key: "material",
       header: "Material",
-      render: (l) => <span className="num">{l.materialNumber}</span>,
+      render: (label) => <span className="num whitespace-nowrap">{label.materialNumber}</span>,
     },
     {
-      key: "desc",
+      key: "description",
       header: "Description",
-      render: (l) => l.description,
-      className: "max-w-[220px] truncate",
+      render: (label) => label.description,
+      className: "max-w-[200px] truncate",
+      hideByDefault: true,
     },
     {
-      key: "qty",
-      header: "Qty",
-      sortValue: (l) => l.quantity,
-      render: (l) => (
-        <span className="num">
-          {l.quantity} {l.uom}
+      key: "quantity",
+      header: "Pack Qty",
+      sortValue: (label) => label.quantity,
+      render: (label) => (
+        <span className="num whitespace-nowrap">
+          {label.quantity} {label.uom}
         </span>
       ),
     },
     {
       key: "batch",
       header: "Batch",
-      render: (l) => <span className="num">{l.batch}</span>,
+      render: (label) => <span className="num">{label.batch}</span>,
       hideByDefault: true,
     },
-    { key: "bin", header: "Bin Seq", render: (l) => <span className="num">{l.binSequence}</span> },
     {
-      key: "prints",
-      header: "Prints",
-      sortValue: (l) => l.printCount,
-      render: (l) => <span className="num">{l.printCount}</span>,
+      key: "sequence",
+      header: "Label No.",
+      render: (label) => <span className="num whitespace-nowrap">{label.binSequence}</span>,
     },
-    { key: "status", header: "Status", render: (l) => <StatusBadge status={l.status} /> },
+    {
+      key: "status",
+      header: "Status",
+      render: (label) => <StatusBadge status={label.status} />,
+    },
     {
       key: "actions",
       header: "",
-      render: (l) => (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="gap-1.5"
-          onClick={(e) => {
-            e.stopPropagation();
-            setReprint(l);
-          }}
-        >
-          {l.printCount > 0 ? (
-            <RefreshCw className="h-3.5 w-3.5" />
-          ) : (
-            <Printer className="h-3.5 w-3.5" />
-          )}
-          {l.printCount > 0 ? "Reprint" : "Print"}
-        </Button>
-      ),
+      render: (label) => {
+        const awaitingInward = isAwaitingInward(label);
+        const isReprint = label.printCount > 0;
+        return (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="gap-1.5 whitespace-nowrap"
+            onClick={(event) => {
+              event.stopPropagation();
+              setReprint(label);
+            }}
+          >
+            {isReprint ? (
+              <RefreshCw className="h-3.5 w-3.5" />
+            ) : (
+              <Printer className="h-3.5 w-3.5" />
+            )}
+            {awaitingInward ? `${isReprint ? "Reprint" : "Print"} & Inward` : "Reprint"}
+          </Button>
+        );
+      },
     },
   ];
 
-  const count = (s: string) => data.filter((l) => l.status === s).length;
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
-        title="Label Management"
-        description="Every pack gets a unique QR label derived from the GRN pack quantity."
+        title="Label Material Inward"
+        description="Print SAP-imported pack labels and inward each completed label in the same flow."
         icon={<QrCode className="h-5 w-5" />}
         actions={
           <>
             <ExportButton name="labels" />
             <Button
-              variant="outline"
               className="gap-2"
-              onClick={() => printerTest.mutate()}
-              disabled={printerTest.isPending || !configuration?.printing.hardwareReady}
-            >
-              <Printer className="h-4 w-4" />
-              {printerTest.isPending ? "Sending…" : "Print Test Label"}
-            </Button>
-            <Button
-              className="gap-2"
-              onClick={() => batchPrint.mutate(filtered.map((label) => label.labelUid))}
-              disabled={filtered.length === 0 || batchPrint.isPending}
+              onClick={openBatchPreview}
+              disabled={isLoading || filtered.length === 0}
             >
               <Printer className="h-4 w-4" /> Batch Print
             </Button>
@@ -190,102 +287,265 @@ function LabelsPage() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Generated" value={count("Generated")} tone="primary" />
-        <StatCard label="Printed" value={count("Printed")} />
-        <StatCard label="Inwarded" value={count("Inwarded")} tone="success" />
-        <StatCard label="Issued" value={count("Issued")} tone="warning" />
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-4">
-          <FilterBar
-            filters={[
-              {
-                key: "status",
-                label: "Label Status",
-                options: ["All", "Generated", "Printed", "Inwarded", "Issued", "Blocked"],
-                value: status,
-                onChange: setStatus,
-              },
-            ]}
-            onReset={() => setStatus("All")}
-          />
+      <div className="grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="min-w-0">
           {isLoading ? (
             <LoadingSkeleton />
           ) : (
             <DataTable
               rows={filtered}
               columns={columns}
-              searchKeys={(l) => `${l.labelUid} ${l.grnNumber} ${l.materialNumber} ${l.batch}`}
+              pageSize={6}
+              searchKeys={(label) =>
+                `${label.labelUid} ${label.grnNumber} ${label.materialNumber} ${label.batch}`
+              }
               onRowClick={setSelected}
               emptyMessage="No labels match the current filter."
               dense
+              toolbar={
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger aria-label="Label status filter" className="h-9 w-[150px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["All", "Generated", "Printed", "Inwarded", "Issued", "Blocked"].map(
+                      (option) => (
+                        <SelectItem key={option} value={option}>
+                          {option === "All" ? "All statuses" : option}
+                        </SelectItem>
+                      ),
+                    )}
+                  </SelectContent>
+                </Select>
+              }
             />
           )}
         </div>
 
-        <div className="space-y-4">
-          <div className="panel p-4">
-            <p className="text-sm font-semibold">Label Preview</p>
-            <p className="mb-3 text-xs text-muted-foreground">100 × 75 mm thermal transfer</p>
-            {active ? <QRPreview label={active} config={cfg} /> : null}
-            <Button
-              type="button"
-              className="mt-4 w-full gap-2"
-              onClick={() => active && setReprint(active)}
-              disabled={!active}
-            >
-              <Printer className="h-4 w-4" />
-              {(active?.printCount ?? 0) > 0 ? "Reprint Selected Label" : "Print Selected Label"}
-            </Button>
-          </div>
-
-          <div className="panel space-y-3 p-4">
-            <p className="text-sm font-semibold">Print Settings</p>
-            <div className="rounded-lg border border-border bg-surface p-3">
-              <Label className="text-xs text-muted-foreground">Active printer</Label>
-              <p className="mt-1 text-sm font-medium">
-                {configuration?.printing.printerName ?? "Loading printer…"}
-              </p>
-              <p className="num text-xs text-muted-foreground">
-                {configuration
-                  ? `${configuration.printing.mode} · ${configuration.printing.dpi} dpi`
-                  : "Reading API configuration"}
-              </p>
+        <div className="panel self-start p-3">
+          <div className="mb-2 flex items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold">Label Preview</p>
+              <p className="text-xs text-muted-foreground">100 × 75 mm thermal transfer</p>
             </div>
-            {(
-              [
-                ["showDescription", "Show description"],
-                ["showBatch", "Show batch"],
-                ["showGrnDate", "Show GRN date"],
-                ["showBin", "Show bin sequence"],
-              ] as const
-            ).map(([key, label]) => (
-              <label key={key} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={cfg[key]}
-                  onCheckedChange={(v) => setCfg((c) => ({ ...c, [key]: Boolean(v) }))}
-                />
-                {label}
-              </label>
-            ))}
+            {active ? <StatusBadge status={active.status} /> : null}
           </div>
+          {active ? (
+            <QRPreview
+              label={active}
+              config={{
+                brandLogoDataUrl: branding.clientLogoDataUrl,
+                brandName: branding.clientName,
+              }}
+            />
+          ) : (
+            <div className="flex aspect-[4/3] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+              Select a label to preview
+            </div>
+          )}
+          <Button
+            type="button"
+            className="mt-3 w-full gap-2"
+            onClick={() => active && setReprint(active)}
+            disabled={!active}
+          >
+            <Printer className="h-4 w-4" />
+            {active && isAwaitingInward(active)
+              ? `${active.printCount > 0 ? "Reprint" : "Print"} & Inward Selected`
+              : "Reprint Selected Label"}
+          </Button>
         </div>
       </div>
 
+      <Dialog
+        open={batchOpen}
+        onOpenChange={(open) => {
+          if (!open && batchPrint.isPending) return;
+          setBatchOpen(open);
+        }}
+      >
+        <DialogContent className="max-h-[90dvh] max-w-5xl gap-0 overflow-hidden p-0">
+          <DialogHeader className="border-b border-border px-5 py-4 pr-12">
+            <DialogTitle>Batch Print Preview</DialogTitle>
+            <DialogDescription>
+              Confirm the exact SAP-imported label range. Each row turns green after print and
+              material inward both complete.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 px-5 py-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                From label
+                <Input
+                  type="number"
+                  min={1}
+                  max={batchSource.length}
+                  value={batchFrom}
+                  disabled={batchPrint.isPending || batchPrint.isSuccess}
+                  onChange={(event) => {
+                    const next = Math.min(
+                      batchSource.length,
+                      Math.max(1, Number(event.target.value) || 1),
+                    );
+                    setBatchFrom(next);
+                    setBatchTo((current) => Math.max(current, next));
+                  }}
+                  className="mt-1 h-9 w-28"
+                />
+              </label>
+              <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                To label
+                <Input
+                  type="number"
+                  min={batchFrom}
+                  max={batchSource.length}
+                  value={batchTo}
+                  disabled={batchPrint.isPending || batchPrint.isSuccess}
+                  onChange={(event) =>
+                    setBatchTo(
+                      Math.min(
+                        batchSource.length,
+                        Math.max(batchFrom, Number(event.target.value) || batchFrom),
+                      ),
+                    )
+                  }
+                  className="mt-1 h-9 w-28"
+                />
+              </label>
+              <div className="pb-2 text-sm text-muted-foreground">
+                Printing <span className="num font-semibold text-foreground">{batchFrom}</span> to{" "}
+                <span className="num font-semibold text-foreground">{batchTo}</span> of{" "}
+                <span className="num font-semibold text-foreground">{batchSource.length}</span>{" "}
+                eligible labels
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Progress
+                value={batchSelection.length ? (batchFinished / batchSelection.length) * 100 : 0}
+                className="h-2 flex-1"
+              />
+              <span className="num text-xs text-muted-foreground">
+                {batchFinished}/{batchSelection.length}
+              </span>
+            </div>
+
+            <div className="max-h-[48dvh] overflow-auto rounded-lg border border-border">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead className="sticky top-0 z-10 bg-surface text-left text-xs tracking-wide text-muted-foreground uppercase shadow-sm">
+                  <tr>
+                    <th className="px-3 py-2.5">#</th>
+                    <th className="px-3 py-2.5">Label UID</th>
+                    <th className="px-3 py-2.5">GRN</th>
+                    <th className="px-3 py-2.5">Material</th>
+                    <th className="px-3 py-2.5">Pack Qty</th>
+                    <th className="px-3 py-2.5">Progress</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batchSelection.map((label, index) => {
+                    const rowProgress = batchProgress[label.labelUid] ?? { state: "queued" };
+                    return (
+                      <tr
+                        key={label.labelUid}
+                        className={cn(
+                          "border-t border-border/70 transition-colors",
+                          rowProgress.state === "completed" && "bg-success/20 text-success",
+                          rowProgress.state === "failed" && "bg-destructive/10 text-destructive",
+                          rowProgress.state === "printing" && "bg-primary/10",
+                        )}
+                      >
+                        <td className="num px-3 py-2.5">{batchFrom + index}</td>
+                        <td className="num px-3 py-2.5 font-semibold">{label.labelUid}</td>
+                        <td className="num px-3 py-2.5">{label.grnNumber}</td>
+                        <td className="num px-3 py-2.5">{label.materialNumber}</td>
+                        <td className="num px-3 py-2.5">
+                          {label.quantity} {label.uom}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <BatchStatus progress={rowProgress} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <DialogFooter className="border-t border-border bg-surface/50 px-5 py-3">
+            <Button
+              variant="outline"
+              onClick={() => setBatchOpen(false)}
+              disabled={batchPrint.isPending}
+            >
+              {batchPrint.isSuccess ? "Done" : "Cancel"}
+            </Button>
+            <Button
+              className="gap-2"
+              disabled={batchSelection.length === 0 || batchPrint.isPending || batchPrint.isSuccess}
+              onClick={() => batchPrint.mutate(batchSelection)}
+            >
+              {batchPrint.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Printer className="h-4 w-4" />
+              )}
+              {batchPrint.isPending
+                ? `Printing ${batchFinished + 1} of ${batchSelection.length}`
+                : batchPrint.isSuccess
+                  ? "Batch Complete"
+                  : `Print & Inward ${batchSelection.length} Labels`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <ConfirmationDialog
         open={!!reprint}
-        onOpenChange={(o) => !o && setReprint(null)}
-        title={(reprint?.printCount ?? 0) > 0 ? "Reprint this label?" : "Print this label?"}
-        description={
-          (reprint?.printCount ?? 0) > 0
-            ? `Label ${reprint?.labelUid ?? ""} has been printed ${reprint?.printCount ?? 0} time(s). A reprint is recorded in the audit log.`
-            : `Send label ${reprint?.labelUid ?? ""} to the active configured printer? The print is recorded in the audit log.`
+        onOpenChange={(open) => {
+          if (!open && !reprintMutation.isPending) setReprint(null);
+        }}
+        title={
+          reprint && isAwaitingInward(reprint)
+            ? `${reprint.printCount > 0 ? "Reprint" : "Print"} and inward this label?`
+            : "Reprint this label?"
         }
-        confirmLabel={(reprint?.printCount ?? 0) > 0 ? "Reprint Label" : "Print Label"}
+        description={
+          reprint && isAwaitingInward(reprint)
+            ? `Label ${reprint.labelUid} will be sent to the printer and marked inward after printing succeeds.`
+            : `Label ${reprint?.labelUid ?? ""} has been printed ${reprint?.printCount ?? 0} time(s). This reprint is recorded in the audit log.`
+        }
+        confirmLabel={
+          reprint && isAwaitingInward(reprint)
+            ? `${reprint.printCount > 0 ? "Reprint" : "Print"} & Inward`
+            : "Reprint Label"
+        }
         onConfirm={() => reprint && reprintMutation.mutate(reprint)}
       />
+    </div>
+  );
+}
+
+function BatchStatus({ progress }: { progress: BatchRowProgress }) {
+  const content: Record<BatchRowState, { icon: typeof Circle; label: string }> = {
+    queued: { icon: Circle, label: "Queued" },
+    printing: { icon: Loader2, label: "Printing" },
+    completed: { icon: CheckCircle2, label: "Printed & inwarded" },
+    failed: { icon: AlertCircle, label: "Needs attention" },
+  };
+  const { icon: Icon, label } = content[progress.state];
+
+  return (
+    <div>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-medium">
+        <Icon className={cn("h-4 w-4", progress.state === "printing" && "animate-spin")} />
+        {label}
+      </span>
+      {progress.message ? (
+        <p className="mt-0.5 max-w-64 text-xs leading-snug">{progress.message}</p>
+      ) : null}
     </div>
   );
 }

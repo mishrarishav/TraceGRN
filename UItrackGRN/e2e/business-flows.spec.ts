@@ -77,7 +77,7 @@ test.describe("business workflows", () => {
     await page.getByRole("button", { name: "Reprint" }).first().click();
     await expect(page.getByRole("alertdialog")).toBeVisible();
     await page.getByRole("button", { name: "Reprint Label" }).click();
-    await expect(page.getByText(/Reprint (sent|simulated)/)).toBeVisible();
+    await expect(page.getByText("Reprint sent")).toBeVisible();
   });
 
   test("a generated label can be printed from its preview", async ({ page }, testInfo) => {
@@ -86,10 +86,10 @@ test.describe("business workflows", () => {
     await gotoReady(page, "/labels");
     await page.getByPlaceholder("Search records…").fill(generated.labelUid);
     await page.getByText(generated.labelUid, { exact: true }).first().click();
-    await page.getByRole("button", { name: "Print Selected Label" }).click();
+    await page.getByRole("button", { name: "Print & Inward Selected" }).click();
     await expect(page.getByRole("alertdialog")).toContainText(generated.labelUid);
-    await page.getByRole("button", { name: "Print Label", exact: true }).click();
-    await expect(page.getByText(/Print (sent|simulated)/)).toBeVisible();
+    await page.getByRole("button", { name: "Print & Inward", exact: true }).click();
+    await expect(page.getByText("Label printed and inwarded")).toBeVisible();
   });
 
   test("theme selection persists after reload", async ({ page }, testInfo) => {

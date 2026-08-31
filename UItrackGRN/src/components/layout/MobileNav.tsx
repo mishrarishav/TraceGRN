@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Gauge, Menu, PackageCheck, ScanLine, Warehouse } from "lucide-react";
+import { Gauge, Menu, QrCode, ScanLine, Warehouse } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { SidebarNav } from "@/components/layout/AppSidebar";
 import { BrandMark } from "@/components/layout/BrandMark";
@@ -34,7 +34,7 @@ export function MobileNav() {
     >
       <div className="flex items-end">
         {item("/", "Home", Gauge)}
-        {item("/inward", "Inward", PackageCheck)}
+        {item("/labels", "Inward", QrCode)}
         <Link
           to="/issue"
           className="brand-gradient -mt-5 flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl text-primary-foreground shadow-[var(--shadow-float)]"

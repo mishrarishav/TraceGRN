@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, Plus } from "lucide-react";
@@ -8,6 +8,11 @@ import { DataTable, type Column } from "@/components/common/DataTable";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { LoadingSkeleton } from "@/components/common/LoadingSkeleton";
 import { StatCard } from "@/components/common/StatCard";
+import {
+  MasterDataBulkUpload,
+  type BulkRowParseResult,
+  type BulkUploadColumn,
+} from "@/components/common/MasterDataBulkUpload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +32,26 @@ import {
   type VendorMutation,
 } from "@/services/api";
 import type { Vendor } from "@/types";
+
+const vendorBulkColumns: BulkUploadColumn[] = [
+  {
+    key: "vendorCode",
+    label: "Vendor Code",
+    required: true,
+    aliases: ["SAP Vendor Code", "Vendor"],
+  },
+  { key: "vendorName", label: "Vendor Name", required: true, aliases: ["Name"] },
+  {
+    key: "aliases",
+    label: "Aliases (use | between values)",
+    aliases: ["Aliases", "Accepted Aliases"],
+  },
+  { key: "isActive", label: "Active", aliases: ["Is Active", "Status"] },
+];
+
+const vendorTemplateRows = [
+  ["V1001", "Sample Vendor", "Sample Vendor Pvt Ltd|Sample Industries", "TRUE"],
+];
 
 export const Route = createFileRoute("/_shell/vendors")({
   head: () => ({
@@ -52,6 +77,11 @@ function VendorsPage() {
   const [form, setForm] = useState<VendorMutation>(emptyForm);
   const [aliasesText, setAliasesText] = useState("");
   const [open, setOpen] = useState(false);
+  const existingVendorIds = useMemo(
+    () =>
+      new Map(data.map((vendor) => [vendor.vendorCode.trim().toUpperCase(), vendor.id] as const)),
+    [data],
+  );
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["vendors"] });
 
   const save = useMutation({
@@ -128,17 +158,33 @@ function VendorsPage() {
         description="SAP vendor codes with canonical names and duplicate-name aliases."
         icon={<Building2 className="h-5 w-5" />}
         actions={
-          <Button
-            className="gap-2"
-            onClick={() => {
-              setSelected(null);
-              setForm(emptyForm);
-              setAliasesText("");
-              setOpen(true);
-            }}
-          >
-            <Plus className="h-4 w-4" /> Add Vendor
-          </Button>
+          <>
+            <MasterDataBulkUpload
+              entityName="Vendor"
+              entityNamePlural="Vendors"
+              templateFileName="trackgrn-vendor-master-template.csv"
+              columns={vendorBulkColumns}
+              templateRows={vendorTemplateRows}
+              existingIds={existingVendorIds}
+              parseRow={parseVendorBulkRow}
+              uploadRow={async (request, existingId) => {
+                if (existingId) await updateVendor(existingId, request);
+                else await createVendor(request);
+              }}
+              onComplete={refresh}
+            />
+            <Button
+              className="gap-2"
+              onClick={() => {
+                setSelected(null);
+                setForm(emptyForm);
+                setAliasesText("");
+                setOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" /> Add Vendor
+            </Button>
+          </>
         }
       />
 
@@ -247,4 +293,46 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </div>
   );
+}
+
+function parseVendorBulkRow(record: Record<string, string>): BulkRowParseResult<VendorMutation> {
+  const vendorCode = record["vendorCode"].trim().toUpperCase();
+  const vendorName = record["vendorName"].trim();
+  const aliases = Array.from(
+    new Map(
+      record["aliases"]
+        .split(/[|,;\n]/)
+        .map((alias) => alias.trim())
+        .filter((alias) => alias && alias.toLowerCase() !== vendorName.toLowerCase())
+        .map((alias) => [alias.toLowerCase(), alias]),
+    ).values(),
+  );
+  const active = parseVendorActive(record["isActive"]);
+  const errors: string[] = [];
+
+  if (!vendorCode) errors.push("Vendor Code is required.");
+  else if (vendorCode.length > 100) errors.push("Vendor Code cannot exceed 100 characters.");
+  if (!vendorName) errors.push("Vendor Name is required.");
+  else if (vendorName.length > 250) errors.push("Vendor Name cannot exceed 250 characters.");
+  if (aliases.some((alias) => alias.length > 250)) {
+    errors.push("Each alias must be 250 characters or fewer.");
+  }
+  if (active.error) errors.push(active.error);
+
+  return {
+    key: vendorCode,
+    value: { vendorCode, vendorName, aliases, isActive: active.value },
+    errors,
+  };
+}
+
+function parseVendorActive(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || ["true", "yes", "y", "1", "active"].includes(normalized)) {
+    return { value: true, error: "" };
+  }
+  if (["false", "no", "n", "0", "inactive"].includes(normalized)) {
+    return { value: false, error: "" };
+  }
+  return { value: true, error: "Active must be TRUE/YES/1 or FALSE/NO/0." };
 }

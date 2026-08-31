@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { desktopOnly, gotoReady } from "./helpers";
+import { createImportedLabel, desktopOnly, gotoReady } from "./helpers";
 
 test.describe("navigation and operational controls", () => {
   test.beforeEach(({ page }, testInfo) => {
@@ -31,6 +31,23 @@ test.describe("navigation and operational controls", () => {
     await expect(page).toHaveURL(/\/configuration$/);
     await page.getByRole("button", { name: "Collapse" }).click();
     await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+  });
+
+  test("sidebar separates master data from operational workflows", async ({ page }) => {
+    await gotoReady(page, "/");
+    const sidebar = page.getByTestId("sidebar-scroll");
+    await expect(sidebar.getByText("Overview", { exact: true })).toBeVisible();
+    await expect(sidebar.getByText("Master Data", { exact: true })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Materials", exact: true })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Vendors", exact: true })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "SAP GRN Import", exact: true })).toBeVisible();
+    await expect(
+      sidebar.getByRole("link", { name: "Label Material Inward", exact: true }),
+    ).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "GRNs", exact: true })).toHaveCount(0);
+    await expect(sidebar.getByRole("link", { name: "Material Inward", exact: true })).toHaveCount(
+      0,
+    );
   });
 
   test("table search, columns, pagination and export controls respond", async ({ page }) => {
@@ -181,10 +198,44 @@ test.describe("navigation and operational controls", () => {
     }
   });
 
-  test("report generation and configuration save provide feedback", async ({ page }) => {
+  test("tabular reports and configuration save provide feedback", async ({ page }) => {
     await gotoReady(page, "/reports");
-    await page.getByRole("button", { name: "Generate" }).first().click();
-    await expect(page.getByText("Report downloaded")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Generate" })).toHaveCount(0);
+    await expect(page.getByLabel("From Date")).toBeVisible();
+    await expect(page.getByLabel("To Date")).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Issued By filter" })).toBeVisible();
+
+    const materialFilter = page.getByRole("combobox", { name: "Material filter" });
+    await materialFilter.click();
+    await expect(page.getByPlaceholder("Search material code or description…")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    const issueReport = page.locator('section[aria-labelledby="issue-report-heading"]');
+    await expect(issueReport.getByRole("columnheader")).toHaveText([
+      "Material Code",
+      "Description",
+      "GRN",
+      "GRN Date",
+      "Label Print Date",
+      "Issue Date",
+      "Issued By",
+      "Issue Qty",
+    ]);
+
+    const importHistory = page.locator('section[aria-labelledby="smart-import-history-heading"]');
+    await expect(importHistory.getByRole("columnheader")).toHaveText([
+      "Imported At",
+      "File",
+      "Imported By",
+      "Batch",
+      "Rows",
+      "New",
+      "Updated",
+      "Unchanged",
+      "Warnings",
+      "Rejected",
+      "Status",
+    ]);
 
     await gotoReady(page, "/configuration");
     await page.getByRole("tab", { name: "Scanning" }).click();
@@ -194,14 +245,26 @@ test.describe("navigation and operational controls", () => {
     await expect(page.getByText("Configuration saved to SQL Server")).toBeVisible();
   });
 
-  test("printer test action dispatches a standalone label", async ({ page }) => {
+  test("label material inward opens an exact batch range preview", async ({ page }) => {
+    const generated = await createImportedLabel(page.request);
     await gotoReady(page, "/labels");
-    await page.getByRole("button", { name: "Print Test Label" }).click();
-    await expect(page.getByText(/Test label (simulated|sent to printer)/)).toBeVisible();
-    await expect(page.getByText(/TEST-\d{8}-\d{6} →/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Label Material Inward" })).toBeVisible();
+    await page.getByPlaceholder("Search records…").fill(generated.labelUid);
+    await page.getByText(generated.labelUid, { exact: true }).first().click();
+    await expect(page.getByRole("button", { name: "Print & Inward Selected" })).toBeVisible();
+    await page.getByPlaceholder("Search records…").clear();
+    await page.getByRole("button", { name: "Batch Print" }).click();
+
+    const preview = page.getByRole("dialog", { name: "Batch Print Preview" });
+    await expect(preview).toBeVisible();
+    await expect(preview.getByText(/Printing 1 to \d+ of \d+ eligible labels/)).toBeVisible();
+    await expect(preview.getByRole("columnheader", { name: "Label UID" })).toBeVisible();
+    await expect(preview.getByRole("columnheader", { name: "Progress" })).toBeVisible();
+    await preview.getByRole("button", { name: "Cancel" }).click();
   });
 
   test("printer configuration can be saved and tested from the UI", async ({ page }) => {
+    let submittedPrinter: Record<string, unknown> | undefined;
     await page.route("**/api/configuration/printer/agents/discover", async (route) => {
       await route.fulfill({
         contentType: "application/json",
@@ -226,6 +289,22 @@ test.describe("navigation and operational controls", () => {
               printers: ["ZDesigner ZD230-203dpi ZPL"],
             },
           ],
+        }),
+      });
+    });
+    await page.route("**/api/configuration/printer/configure-and-test", async (route) => {
+      submittedPrinter = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          saved: true,
+          labelUid: "TEST-20260827-120000",
+          mode: "LocalAgent",
+          printer: "ZDesigner ZD230-203dpi ZPL",
+          host: "192.168.1.24",
+          port: 17891,
+          dpi: 203,
         }),
       });
     });
@@ -256,15 +335,14 @@ test.describe("navigation and operational controls", () => {
     await expect(page.getByLabel("Print Agent IP or hostname")).toHaveValue("192.168.1.24");
     await expect(page.getByLabel("Printer name")).toHaveValue("ZDesigner ZD230-203dpi ZPL");
 
-    await page.getByLabel("Printer connection mode").click();
-    await page.getByRole("option", { name: "Simulation (no physical print)" }).click();
-    await page.getByLabel("Printer name").fill("SQL Test Printer");
     await page.getByRole("button", { name: "Save & Test Printer" }).click();
     await expect(page.getByText("Printer saved and test label dispatched")).toBeVisible();
-    await page.reload();
-    await page.locator('html[data-hydrated="true"]').waitFor();
-    await page.getByRole("tab", { name: "Plant & Hardware" }).click();
-    await expect(page.getByText("Simulation · SQL Test Printer")).toBeVisible();
+    expect(submittedPrinter).toMatchObject({
+      mode: "LocalAgent",
+      printerName: "ZDesigner ZD230-203dpi ZPL",
+      host: "192.168.1.24",
+      port: 17891,
+    });
   });
 
   test("installed local agent dispatches a physical Zebra test label", async ({ page }) => {
@@ -277,29 +355,16 @@ test.describe("navigation and operational controls", () => {
 
     await gotoReady(page, "/configuration");
     await page.getByRole("tab", { name: "Plant & Hardware" }).click();
-    try {
-      await page.getByLabel("Printer connection mode").click();
-      await page.getByRole("option", { name: "Print locally via installed Agent" }).click();
-      await page.getByRole("button", { name: "Find Installed Print Agents" }).click();
-      const printerRow = page.getByText(printerName, { exact: true }).locator("..");
-      await expect(printerRow).toBeVisible({ timeout: 20_000 });
-      await printerRow.getByRole("button", { name: "Use this printer" }).click();
-      await page.getByRole("button", { name: "Save & Test Printer" }).click();
-      await expect(page.getByText("Printer saved and test label dispatched").last()).toBeVisible({
-        timeout: 15_000,
-      });
-    } finally {
-      await page.getByLabel("Printer connection mode").click();
-      await page.getByRole("option", { name: "Simulation (no physical print)" }).click();
-      await page.getByLabel("Printer name").fill("SQL Test Printer");
-      const resetResponse = page.waitForResponse(
-        (response) =>
-          response.url().includes("/api/configuration/printer/configure-and-test") &&
-          response.request().method() === "POST",
-      );
-      await page.getByRole("button", { name: "Save & Test Printer" }).click();
-      expect((await resetResponse).ok()).toBeTruthy();
-    }
+    await page.getByLabel("Printer connection mode").click();
+    await page.getByRole("option", { name: "Print locally via installed Agent" }).click();
+    await page.getByRole("button", { name: "Find Installed Print Agents" }).click();
+    const printerRow = page.getByText(printerName, { exact: true }).locator("..");
+    await expect(printerRow).toBeVisible({ timeout: 20_000 });
+    await printerRow.getByRole("button", { name: "Use this printer" }).click();
+    await page.getByRole("button", { name: "Save & Test Printer" }).click();
+    await expect(page.getByText("Printer saved and test label dispatched").last()).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test("offline mode warns that issue transactions require connectivity", async ({

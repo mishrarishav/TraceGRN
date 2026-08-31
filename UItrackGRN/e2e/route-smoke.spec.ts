@@ -26,7 +26,7 @@ test.describe("desktop route health", () => {
     "/",
     "/login",
     "/import",
-    "/inward",
+    "/labels",
     "/issue",
     "/traceability",
     "/configuration",

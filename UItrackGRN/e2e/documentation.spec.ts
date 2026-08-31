@@ -123,28 +123,34 @@ test.describe("annotated documentation evidence", () => {
     await gotoReady(page, "/import");
     await annotate(page, [
       {
-        locator: page.getByText("Drop your SAP GRN Excel file here").locator(".."),
-        label: "1. Validated .xlsx upload",
+        locator: page.getByText("Drop the GRN workbook here").locator(".."),
+        label: "1. Validated SAP workbook upload",
       },
       {
-        locator: page.getByText("Identification Strategy").locator("../.."),
-        label: "2. Business identity strategy",
+        locator: page.getByText("Format memory").locator("../.."),
+        label: "2. Remembered SAP formats",
       },
-      { locator: page.getByRole("button", { name: "Browse Files" }), label: "3. Start import" },
+      { locator: page.getByRole("button", { name: "Browse File" }), label: "3. Start import" },
     ]);
     await capture(page, "02-sap-import-annotated.png");
 
-    await gotoReady(page, "/inward");
+    await gotoReady(page, "/labels");
     await annotate(page, [
       {
-        locator: page.getByRole("heading", { name: "Material Inward" }),
-        label: "1. Inward operation",
+        locator: page.getByRole("heading", { name: "Label Material Inward" }),
+        label: "1. Combined label and inward operation",
       },
-      { locator: page.getByPlaceholder("LBL-00000000"), label: "2. Zebra / keyboard-wedge scan" },
-      { locator: page.getByRole("button", { name: "Lookup" }), label: "3. Validate and receive" },
       {
-        locator: page.getByText("Session Log").locator(".."),
-        label: "4. Accepted/rejected audit trail",
+        locator: page.getByRole("table").first(),
+        label: "2. SAP-imported label queue",
+      },
+      {
+        locator: page.getByRole("button", { name: "Batch Print" }),
+        label: "3. Preview an exact print range",
+      },
+      {
+        locator: page.getByText("Label Preview").locator("../.."),
+        label: "4. Live thermal label preview",
       },
     ]);
     await capture(page, "03-material-inward-annotated.png");
@@ -153,13 +159,19 @@ test.describe("annotated documentation evidence", () => {
     await annotate(page, [
       { locator: page.getByLabel("Issue station"), label: "1. Required production station" },
       { locator: page.getByPlaceholder("LBL-00000000"), label: "2. Scan an inwarded pack" },
-      { locator: page.getByRole("button", { name: "Lookup" }), label: "3. Guarded issue lookup" },
-      { locator: page.getByText("Session Log").locator(".."), label: "4. Issue audit trail" },
+      {
+        locator: page.getByRole("button", { name: "Scan & Issue" }),
+        label: "3. Validate and issue",
+      },
+      {
+        locator: page.getByRole("heading", { name: "Issued Materials" }).locator("../.."),
+        label: "4. Successful issues appear in green",
+      },
     ]);
     await capture(page, "04-material-issue-annotated.png");
 
     await gotoReady(page, "/traceability");
-    const traceSearch = page.getByPlaceholder("Label UID, GRN, material or batch");
+    const traceSearch = page.getByPlaceholder("Label UID, GRN, material, batch or full QR payload");
     await traceSearch.fill("LBL-00003452");
     await page.getByRole("button", { name: "Trace" }).click();
     await expect(page.getByRole("heading", { name: "LBL-00003452" })).toBeVisible();
@@ -206,8 +218,8 @@ test.describe("annotated documentation evidence", () => {
       { locator: page.getByLabel("Issue station"), label: "1. Station" },
       { locator: page.getByPlaceholder("LBL-00000000"), label: "2. Scanner is above fold" },
       {
-        locator: page.getByText("Scan", { exact: true }).last().locator(".."),
-        label: "3. Thumb-ready scan action",
+        locator: page.getByRole("button", { name: "Scan & Issue" }),
+        label: "3. Thumb-ready issue action",
       },
     ]);
     await capture(page, "07-zebra-issue-480x800-annotated.png");

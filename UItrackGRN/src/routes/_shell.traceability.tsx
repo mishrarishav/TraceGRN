@@ -11,9 +11,9 @@ import { EmptyState } from "@/components/common/EmptyState";
 import { ExportButton } from "@/components/common/ExportButton";
 import { QRCodeArt } from "@/components/common/QRPreview";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { getLabels, searchTraceability } from "@/services/api";
-import type { TraceResult } from "@/types";
+import type { TraceResult, TraceStep } from "@/types";
 
 export const Route = createFileRoute("/_shell/traceability")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -37,6 +37,61 @@ export const Route = createFileRoute("/_shell/traceability")({
   component: TraceabilityPage,
 });
 
+function traceCandidates(input: string) {
+  const value = input.trim();
+  if (!value) return [];
+
+  const candidates = [value];
+  const labelUid = value.match(/\bLBL-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/i)?.[0];
+  const labelledUid = value.match(/(?:^|[\r\n])\s*(?:label(?:\s+uid)?|uid)\s*:\s*([^\r\n]+)/i)?.[1];
+  const grn = value.match(/(?:^|[\r\n])\s*GRN(?:\s+number)?\s*:\s*([^\r\n]+)/i)?.[1];
+  const guid = value.match(
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i,
+  )?.[0];
+
+  for (const candidate of [
+    labelUid,
+    labelledUid,
+    grn,
+    guid,
+    guid ? `LBL-${guid.replaceAll("-", "")}` : undefined,
+  ]) {
+    const normalized = candidate?.trim();
+    if (normalized && !candidates.some((item) => item.toLowerCase() === normalized.toLowerCase())) {
+      candidates.push(normalized);
+    }
+  }
+
+  return candidates;
+}
+
+async function traceAny(input: string) {
+  for (const candidate of traceCandidates(input)) {
+    const result = await searchTraceability(candidate);
+    if (result) return result;
+  }
+  return null;
+}
+
+function mergeLabelCreationSteps(steps: TraceStep[]) {
+  const isCreationStep = (step: TraceStep) =>
+    step.title === "Label Generated" || step.title === "Label Printed";
+  const printed = [...steps].reverse().find((step) => step.title === "Label Printed");
+  if (!printed) return steps;
+
+  const firstIndex = steps.findIndex(isCreationStep);
+  if (firstIndex < 0) return steps;
+
+  const creationSteps = steps.filter(isCreationStep);
+  const combined: TraceStep = {
+    ...printed,
+    title: "Label Generated & Printed",
+  };
+  const merged = steps.filter((step) => !isCreationStep(step));
+  merged.splice(firstIndex, 0, combined);
+  return merged;
+}
+
 function TraceabilityPage() {
   const { q: initialQuery } = Route.useSearch();
   const [query, setQuery] = useState(initialQuery);
@@ -48,9 +103,9 @@ function TraceabilityPage() {
   ).slice(0, 4);
 
   const { mutate: trace, isPending } = useMutation({
-    mutationFn: (q: string) => searchTraceability(q),
+    mutationFn: traceAny,
     onSuccess: (res) => {
-      setResult(res);
+      setResult(res ? { ...res, steps: mergeLabelCreationSteps(res.steps) } : null);
       setNotFound(!res);
     },
   });
@@ -64,14 +119,19 @@ function TraceabilityPage() {
 
   const run = (q: string) => {
     setQuery(q);
-    if (q.trim()) trace(q);
+    if (q.trim()) {
+      trace(q);
+    } else {
+      setResult(null);
+      setNotFound(false);
+    }
   };
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Traceability"
-        description="Search by label UID, GRN number, material number or batch to replay the full history."
+        description="Search by label UID, GRN, material, batch or the complete scanned QR payload."
         icon={<RouteIcon className="h-5 w-5" />}
         actions={result ? <ExportButton name={`trace-${result.labelUid}`} /> : undefined}
       />
@@ -82,15 +142,17 @@ function TraceabilityPage() {
             e.preventDefault();
             run(query);
           }}
-          className="flex flex-col gap-3 sm:flex-row"
+          className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-start"
         >
           <div className="relative flex-1">
-            <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
+            <Search className="absolute top-4 left-3 h-4 w-4 text-muted-foreground" />
+            <Textarea
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Label UID, GRN, material or batch"
-              className="num h-12 pl-9 text-base"
+              placeholder="Label UID, GRN, material, batch or full QR payload"
+              aria-label="Traceability search"
+              rows={1}
+              className="num min-h-12 resize-y pl-9 text-base"
             />
           </div>
           <Button type="submit" size="lg" className="h-12 px-8" disabled={isPending}>
@@ -116,7 +178,7 @@ function TraceabilityPage() {
       {notFound ? (
         <EmptyState
           title="No traceability record found"
-          description="Check the label UID, GRN, material or batch number and search again."
+          description="Check the QR payload, label UID, GRN, material or batch number and search again."
           icon={<SearchX className="h-6 w-6" />}
         />
       ) : null}

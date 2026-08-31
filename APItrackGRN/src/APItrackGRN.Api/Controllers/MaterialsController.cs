@@ -1,4 +1,5 @@
 using APItrackGRN.Api.Services;
+using APItrackGRN.Application.Labels;
 using APItrackGRN.Domain.Entities;
 using APItrackGRN.Domain.Enums;
 using APItrackGRN.Infrastructure.Persistence;
@@ -11,7 +12,11 @@ namespace APItrackGRN.Api.Controllers;
 [Authorize]
 [ApiController]
 [Route("api/materials")]
-public sealed class MaterialsController(TrackGrnDbContext dbContext, IAuditWriter audit) : TrackControllerBase
+public sealed class MaterialsController(
+    TrackGrnDbContext dbContext,
+    IAuditWriter audit,
+    ILabelQuantityCalculator labelQuantityCalculator,
+    IRequestContext requestContext) : TrackControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get([FromQuery] string? search, [FromQuery] int page = 1,
@@ -86,13 +91,18 @@ public sealed class MaterialsController(TrackGrnDbContext dbContext, IAuditWrite
     {
         var error = Validate(request);
         if (error is not null) return ValidationProblem(error);
-        var entity = await dbContext.Materials.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        var entity = await dbContext.Materials
+            .Include(x => x.GrnLines.Where(line => line.IsActive)).ThenInclude(line => line.GrnHeader)
+            .Include(x => x.GrnLines.Where(line => line.IsActive)).ThenInclude(line => line.Labels)
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (entity is null) return NotFound();
         var number = request.MaterialNumber.Trim().ToUpperInvariant();
         if (await dbContext.Materials.AnyAsync(x => x.Id != id && x.MaterialNumber == number, cancellationToken))
             return Conflict(Problem("Material already exists", $"Material {number} is already configured."));
         var old = new { entity.MaterialNumber, entity.Description, entity.Uom, entity.DefaultPackingStandard,
             entity.PartNumber, entity.DefaultBinLocation, entity.OpeningQuantity, entity.IsActive };
+        if (entity.DefaultPackingStandard != request.PackingStandard)
+            RepackPendingLabels(entity, request.PackingStandard, number);
         entity.MaterialNumber = number;
         entity.Description = request.Description.Trim();
         entity.Uom = request.Uom.Trim().ToUpperInvariant();
@@ -104,6 +114,97 @@ public sealed class MaterialsController(TrackGrnDbContext dbContext, IAuditWrite
         audit.Add("MaterialUpdated", "Material", id.ToString(), old, request);
         await dbContext.SaveChangesAsync(cancellationToken);
         return NoContent();
+    }
+
+    private void RepackPendingLabels(Material material, decimal packingStandard, string materialNumber)
+    {
+        foreach (var line in material.GrnLines.Where(x => x.IsActive))
+        {
+            var active = line.Labels.Where(x => x.IsActive && x.LabelStatus != LabelStatus.Cancelled)
+                .OrderBy(x => x.SequenceNumber).ToList();
+            if (line.Labels.Any(x => x.PrintCount > 0 || x.InwardedAt != null || x.IssuedAt != null))
+                continue;
+            if (active.Count == 0)
+            {
+                line.PackingStandard = packingStandard;
+                line.RecordVersion++;
+                continue;
+            }
+            if (active.Any(x => x.LabelStatus != LabelStatus.Generated)) continue;
+
+            var desired = labelQuantityCalculator.Calculate(line.ReceivedQuantity, packingStandard);
+            var retained = Math.Min(active.Count, desired.Count);
+            for (var index = 0; index < retained; index++)
+            {
+                var label = active[index];
+                label.LabelQuantity = desired[index];
+                label.QrPayload = LabelIdentity.CreateQrPayload(label.LabelUid, line.GrnHeader.GrnNumber,
+                    materialNumber, label.LabelQuantity, line.Uom, line.GrnHeader.GrnDate,
+                    label.GeneratedAt);
+            }
+
+            foreach (var label in active.Skip(desired.Count))
+            {
+                label.LabelStatus = LabelStatus.Cancelled;
+                label.IsActive = false;
+                AddLabelTransaction(label, line, TransactionType.Cancel, LabelStatus.Generated,
+                    LabelStatus.Cancelled, "Cancelled after material master pack quantity changed");
+            }
+
+            if (desired.Count > active.Count)
+            {
+                var highestSequence = line.Labels.Count == 0 ? 0 : line.Labels.Max(x => x.SequenceNumber);
+                var generatedAt = DateTimeOffset.UtcNow;
+                for (var index = active.Count; index < desired.Count; index++)
+                {
+                    var labelId = Guid.NewGuid();
+                    var labelUid = LabelIdentity.FromId(labelId);
+                    var label = new MaterialLabel
+                    {
+                        Id = labelId,
+                        LabelUid = labelUid,
+                        GrnLine = line,
+                        SequenceNumber = highestSequence + index - active.Count + 1,
+                        LabelQuantity = desired[index],
+                        Uom = line.Uom,
+                        QrPayload = LabelIdentity.CreateQrPayload(labelUid, line.GrnHeader.GrnNumber,
+                            materialNumber, desired[index], line.Uom, line.GrnHeader.GrnDate,
+                            generatedAt),
+                        LabelStatus = LabelStatus.Generated,
+                        GeneratedById = requestContext.UserId,
+                        GeneratedAt = generatedAt
+                    };
+                    dbContext.MaterialLabels.Add(label);
+                    AddLabelTransaction(label, line, TransactionType.LabelGenerated,
+                        LabelStatus.Generated, LabelStatus.Generated,
+                        "Generated after material master pack quantity changed");
+                }
+            }
+
+            line.PackingStandard = packingStandard;
+            line.RecordVersion++;
+        }
+    }
+
+    private void AddLabelTransaction(MaterialLabel label, GrnLine line, TransactionType type,
+        LabelStatus previous, LabelStatus next, string remarks)
+    {
+        var now = DateTimeOffset.UtcNow;
+        dbContext.MaterialTransactions.Add(new MaterialTransaction
+        {
+            TransactionNumber = $"TXN-{type.ToString()[..Math.Min(3, type.ToString().Length)].ToUpperInvariant()}-{now:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}"[..48],
+            TransactionType = type,
+            Label = label,
+            GrnLine = line,
+            Material = line.Material,
+            Quantity = label.LabelQuantity,
+            Uom = label.Uom,
+            UserId = requestContext.UserId,
+            Timestamp = now,
+            Remarks = remarks,
+            PreviousStatus = previous,
+            NewStatus = next
+        });
     }
 
     [Authorize(Roles = "Admin")]

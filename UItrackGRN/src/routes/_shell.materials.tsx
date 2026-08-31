@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Plus } from "lucide-react";
@@ -10,6 +10,11 @@ import { FilterBar } from "@/components/common/FilterBar";
 import { ExportButton } from "@/components/common/ExportButton";
 import { LoadingSkeleton } from "@/components/common/LoadingSkeleton";
 import { StatCard } from "@/components/common/StatCard";
+import {
+  MasterDataBulkUpload,
+  type BulkRowParseResult,
+  type BulkUploadColumn,
+} from "@/components/common/MasterDataBulkUpload";
 import {
   Sheet,
   SheetContent,
@@ -30,6 +35,31 @@ import {
   type MaterialMutation,
 } from "@/services/api";
 import type { Material } from "@/types";
+
+const materialBulkColumns: BulkUploadColumn[] = [
+  {
+    key: "materialNumber",
+    label: "Material Number",
+    required: true,
+    aliases: ["Material", "Material Code"],
+  },
+  { key: "description", label: "Description", required: true },
+  { key: "uom", label: "UOM", required: true, aliases: ["Unit", "Unit of Measure"] },
+  {
+    key: "packingStandard",
+    label: "Pack Quantity",
+    required: true,
+    aliases: ["Pack Qty", "Packing Standard"],
+  },
+  { key: "partNumber", label: "Part Number", aliases: ["Part No"] },
+  { key: "defaultBinLocation", label: "Default Bin", aliases: ["Bin", "Bin Location"] },
+  { key: "openingQuantity", label: "Opening Quantity", aliases: ["Opening Qty"] },
+  { key: "isActive", label: "Active", aliases: ["Is Active", "Status"] },
+];
+
+const materialTemplateRows = [
+  ["M1", "Sample material", "PCS", "200", "PART-001", "A-01", "1000", "TRUE"],
+];
 
 export const Route = createFileRoute("/_shell/materials")({
   head: () => ({
@@ -63,6 +93,13 @@ function MaterialsPage() {
     openingQuantity: null,
     isActive: true,
   });
+  const existingMaterialIds = useMemo(() => {
+    const result = new Map<string, string>();
+    data.forEach((material) => {
+      if (material.id) result.set(material.materialNumber.trim().toUpperCase(), material.id);
+    });
+    return result;
+  }, [data]);
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["materials"] });
   const save = useMutation({
     mutationFn: async () => {
@@ -175,6 +212,20 @@ function MaterialsPage() {
         icon={<Boxes className="h-5 w-5" />}
         actions={
           <>
+            <MasterDataBulkUpload
+              entityName="Material"
+              entityNamePlural="Materials"
+              templateFileName="trackgrn-material-master-template.csv"
+              columns={materialBulkColumns}
+              templateRows={materialTemplateRows}
+              existingIds={existingMaterialIds}
+              parseRow={parseMaterialBulkRow}
+              uploadRow={async (request, existingId) => {
+                if (existingId) await updateMaterial(existingId, request);
+                else await createMaterial(request);
+              }}
+              onComplete={refresh}
+            />
             <ExportButton name="materials" />
             <Button
               className="gap-2"
@@ -425,4 +476,63 @@ function Row({ k, v }: { k: string; v: string }) {
       <span className="num font-medium">{v}</span>
     </div>
   );
+}
+
+function parseMaterialBulkRow(
+  record: Record<string, string>,
+): BulkRowParseResult<MaterialMutation> {
+  const materialNumber = record["materialNumber"].trim().toUpperCase();
+  const description = record["description"].trim();
+  const uom = record["uom"].trim().toUpperCase();
+  const partNumber = record["partNumber"].trim();
+  const defaultBinLocation = record["defaultBinLocation"].trim();
+  const packingStandard = Number(record["packingStandard"]);
+  const openingQuantity = record["openingQuantity"].trim()
+    ? Number(record["openingQuantity"])
+    : null;
+  const active = parseActive(record["isActive"]);
+  const errors: string[] = [];
+
+  if (!materialNumber) errors.push("Material Number is required.");
+  else if (materialNumber.length > 100)
+    errors.push("Material Number cannot exceed 100 characters.");
+  if (!description) errors.push("Description is required.");
+  else if (description.length > 500) errors.push("Description cannot exceed 500 characters.");
+  if (!uom) errors.push("UOM is required.");
+  else if (uom.length > 20) errors.push("UOM cannot exceed 20 characters.");
+  if (!Number.isFinite(packingStandard) || packingStandard <= 0) {
+    errors.push("Pack Quantity must be a number greater than zero.");
+  }
+  if (openingQuantity !== null && (!Number.isFinite(openingQuantity) || openingQuantity < 0)) {
+    errors.push("Opening Quantity must be blank or a non-negative number.");
+  }
+  if (partNumber.length > 100) errors.push("Part Number cannot exceed 100 characters.");
+  if (defaultBinLocation.length > 100) errors.push("Default Bin cannot exceed 100 characters.");
+  if (active.error) errors.push(active.error);
+
+  return {
+    key: materialNumber,
+    value: {
+      materialNumber,
+      description,
+      uom,
+      packingStandard,
+      partNumber,
+      defaultBinLocation,
+      openingQuantity,
+      isActive: active.value,
+    },
+    errors,
+  };
+}
+
+function parseActive(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || ["true", "yes", "y", "1", "active"].includes(normalized)) {
+    return { value: true, error: "" };
+  }
+  if (["false", "no", "n", "0", "inactive"].includes(normalized)) {
+    return { value: false, error: "" };
+  }
+  return { value: true, error: "Active must be TRUE/YES/1 or FALSE/NO/0." };
 }

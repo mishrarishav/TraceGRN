@@ -1,17 +1,13 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle2, Forklift, XCircle } from "lucide-react";
+import { CheckCircle2, Forklift, Loader2, ScanLine, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/PageHeader";
-import { ScannerInput } from "@/components/common/ScannerInput";
-import { MaterialSummaryCard } from "@/components/common/MaterialSummaryCard";
-import { StatCard } from "@/components/common/StatCard";
 import { StatusBadge } from "@/components/common/StatusBadge";
-import { EmptyState } from "@/components/common/EmptyState";
-import { ConfirmationDialog } from "@/components/common/ConfirmationDialog";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -19,8 +15,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getLabels, getStations, issueMaterial, scanErrorMessage, scanLabel } from "@/services/api";
-import { createRuntimeId } from "@/lib/id";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  getStations,
+  getTransactions,
+  issueMaterial,
+  scanErrorMessage,
+  scanLabel,
+} from "@/services/api";
 import type { MaterialLabel } from "@/types";
 
 export const Route = createFileRoute("/_shell/issue")({
@@ -38,236 +47,312 @@ export const Route = createFileRoute("/_shell/issue")({
   component: IssuePage,
 });
 
-interface IssueLog {
-  id: string;
-  labelUid: string;
-  material: string;
-  qty: string;
-  time: string;
-  ok: boolean;
-  message: string;
+interface IssuedConfirmation {
+  label: MaterialLabel;
+  station: string;
+  quantity: number;
+  remaining: number;
+  uom: string;
+}
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function formatGrnDate(value?: string | null) {
+  if (!value) return "—";
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (dateOnly) return `${dateOnly[3]}-${dateOnly[2]}-${dateOnly[1]}`;
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return `${padDatePart(parsed.getDate())}-${padDatePart(parsed.getMonth() + 1)}-${parsed.getFullYear()}`;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const hours = parsed.getHours();
+  const displayHours = hours % 12 || 12;
+  const period = hours >= 12 ? "PM" : "AM";
+  return `${padDatePart(parsed.getDate())}-${padDatePart(parsed.getMonth() + 1)}-${parsed.getFullYear()}, ${padDatePart(displayHours)}:${padDatePart(parsed.getMinutes())}:${padDatePart(parsed.getSeconds())} ${period}`;
 }
 
 function IssuePage() {
   const queryClient = useQueryClient();
-  const [pending, setPending] = useState<MaterialLabel | null>(null);
-  const [confirmed, setConfirmed] = useState<MaterialLabel | null>(null);
+  const scannerRef = useRef<HTMLTextAreaElement>(null);
+  const [scanCode, setScanCode] = useState("");
+  const [lastIssued, setLastIssued] = useState<IssuedConfirmation | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [log, setLog] = useState<IssueLog[]>([]);
   const [station, setStation] = useState("STORE-EXIT-01");
-  const [remaining, setRemaining] = useState<number | null>(null);
   const { data: stationRows = [] } = useQuery({ queryKey: ["stations"], queryFn: getStations });
-  const { data: labels = [] } = useQuery({ queryKey: ["labels"], queryFn: getLabels });
+  const { data: transactions = [] } = useQuery({
+    queryKey: ["transactions"],
+    queryFn: getTransactions,
+  });
   const issueStations = stationRows.filter(
     (row) =>
       row.status === "Active" && (row.type === "Issue Station" || row.type === "General Station"),
   );
-  const simulationLabel =
-    labels.find((label) => label.status === "Inwarded") ??
-    labels.find((label) => label.status === "Generated" || label.status === "Printed") ??
-    labels[0];
+  const issuedRows = transactions.filter((row) => row.type === "Issue").slice(0, 50);
+
+  const issue = useMutation({
+    mutationFn: async (label: MaterialLabel) => {
+      const issueStation = station;
+      return {
+        label,
+        issueStation,
+        result: await issueMaterial(label.labelUid, issueStation),
+      };
+    },
+    onSuccess: ({ label, issueStation, result }) => {
+      setError(null);
+      setLastIssued({ label, station: issueStation, ...result });
+      void queryClient.invalidateQueries({ queryKey: ["labels"] });
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      toast.success("Material issued", {
+        description: `${label.labelUid} · ${result.quantity} ${result.uom} to ${issueStation}`,
+      });
+    },
+    onError: (failure) => {
+      const message = failure instanceof Error ? failure.message : "Issue transaction failed";
+      setError(message);
+      setLastIssued(null);
+      toast.error("Issue failed", { description: message });
+    },
+    onSettled: () => scannerRef.current?.focus(),
+  });
 
   const scan = useMutation({
     mutationFn: (code: string) => scanLabel(code, "issue"),
     onSuccess: (res, code) => {
       if (!res.ok) {
-        setPending(null);
-        setConfirmed(null);
+        setLastIssued(null);
         const message = scanErrorMessage[res.error];
         setError(message);
         toast.error("Scan rejected", { description: `${code} · ${message}` });
-        setLog((l) => [
-          {
-            id: createRuntimeId("scan"),
-            labelUid: code,
-            material: "—",
-            qty: "—",
-            time: new Date().toLocaleTimeString(),
-            ok: false,
-            message,
-          },
-          ...l,
-        ]);
+        scannerRef.current?.focus();
         return;
       }
       setError(null);
-      setConfirmed(null);
-      setPending(res.label);
-    },
-  });
-
-  const issue = useMutation({
-    mutationFn: async (label: MaterialLabel) => ({
-      label,
-      result: await issueMaterial(label.labelUid, station),
-    }),
-    onSuccess: ({ label, result }) => {
-      setConfirmed(label);
-      setRemaining(result.remaining);
-      void queryClient.invalidateQueries({ queryKey: ["labels"] });
-      toast.success("Material issued", {
-        description: `${label.labelUid} · ${result.quantity} ${result.uom} to ${station}`,
-      });
-      setLog((l) => [
-        {
-          id: createRuntimeId("scan"),
-          labelUid: label.labelUid,
-          material: label.materialNumber,
-          qty: `${result.quantity} ${result.uom}`,
-          time: new Date().toLocaleTimeString(),
-          ok: true,
-          message: `Issued to ${station}`,
-        },
-        ...l,
-      ]);
-      setPending(null);
+      setLastIssued(null);
+      issue.mutate(res.label);
     },
     onError: (failure) => {
-      const message = failure instanceof Error ? failure.message : "Issue transaction failed";
+      const message = failure instanceof Error ? failure.message : "Unable to read this label";
       setError(message);
-      setConfirmed(null);
-      toast.error("Issue failed", { description: message });
+      setLastIssued(null);
+      toast.error("Scan failed", { description: message });
+      scannerRef.current?.focus();
     },
   });
 
-  const okCount = log.filter((l) => l.ok).length;
+  const busy = scan.isPending || issue.isPending;
+  const submitScan = (candidate = scanCode) => {
+    const code = candidate.trim();
+    if (!code || busy || !station) return;
+    setScanCode("");
+    scan.mutate(code);
+  };
+
+  const scanIsComplete = (candidate: string) => {
+    const normalized = candidate.trim();
+    return (
+      /^LBL-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i.test(normalized) ||
+      /(?:^|[\r\n])\s*Label\s+(?:ID|UID)\s*:\s*LBL-[A-Z0-9-]+\s*$/i.test(normalized)
+    );
+  };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title="Material Issue"
-        description="Store-to-production issue. Each scan permanently consumes the labelled pack."
+        description="Scan an inwarded, available pack to issue it directly to production."
         icon={<Forklift className="h-5 w-5" />}
         actions={<StatusBadge status="Active" size="lg" />}
       />
 
-      <div className="grid grid-cols-3 gap-2 sm:gap-4">
-        <StatCard label="Scans this session" value={log.length} tone="primary" />
-        <StatCard label="Issued" value={okCount} tone="success" />
-        <StatCard label="Rejected" value={log.length - okCount} tone="danger" />
+      <div className="panel p-4">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitScan();
+          }}
+          className="grid items-end gap-3 lg:grid-cols-[minmax(14rem,18rem)_minmax(18rem,1fr)_auto]"
+        >
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+              Issue station
+            </label>
+            <Select value={station} onValueChange={setStation} disabled={busy}>
+              <SelectTrigger className="h-11" aria-label="Issue station">
+                <SelectValue placeholder="Select an issue station" />
+              </SelectTrigger>
+              <SelectContent>
+                {issueStations.map((row) => (
+                  <SelectItem key={row.code} value={row.code}>
+                    {row.code} · {row.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <label
+              htmlFor="issue-label-scan"
+              className="mb-1.5 block text-xs font-medium text-muted-foreground"
+            >
+              Pack QR / Label UID
+            </label>
+            <div className="relative">
+              <ScanLine className="absolute top-3.5 left-3 h-4 w-4 text-muted-foreground" />
+              <Textarea
+                ref={scannerRef}
+                id="issue-label-scan"
+                value={scanCode}
+                autoFocus
+                inputMode="text"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={busy}
+                onChange={(event) => setScanCode(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && scanIsComplete(event.currentTarget.value)) {
+                    event.preventDefault();
+                    submitScan(event.currentTarget.value);
+                  }
+                }}
+                placeholder="Scan full QR payload or enter Label UID"
+                rows={1}
+                className="num min-h-11 resize-none py-3 pl-9 tracking-wide"
+              />
+            </div>
+          </div>
+
+          <Button
+            type="submit"
+            className="h-11 px-6"
+            disabled={busy || !station || !scanCode.trim()}
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
+            {scan.isPending ? "Checking…" : issue.isPending ? "Issuing…" : "Scan & Issue"}
+          </Button>
+        </form>
+
+        <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+          Only inwarded packs with available quantity can be issued. Every scan is validated before
+          the issue transaction.
+        </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="space-y-4">
-          <div className="panel space-y-4 p-3 sm:p-5">
+      <AnimatePresence mode="wait">
+        {error ? (
+          <motion.div
+            key={error}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            role="alert"
+            className="flex items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3"
+          >
+            <XCircle className="h-5 w-5 shrink-0 text-destructive" />
             <div>
-              <p className="mb-2 text-xs font-medium text-muted-foreground">Issue station</p>
-              <Select value={station} onValueChange={setStation}>
-                <SelectTrigger className="h-11" aria-label="Issue station">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {issueStations.map((row) => (
-                    <SelectItem key={row.code} value={row.code}>
-                      {row.code} · {row.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <p className="text-sm font-semibold text-destructive">Scan rejected</p>
+              <p className="text-xs text-destructive/80">{error}</p>
             </div>
-            <ScannerInput
-              onScan={(code) => scan.mutate(code)}
-              busy={scan.isPending}
-              hint="Scan the pack QR label with the handheld device."
-              suggestion={simulationLabel?.labelUid}
-            />
-          </div>
+          </motion.div>
+        ) : lastIssued ? (
+          <motion.div
+            key={lastIssued.label.labelUid}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-success/40 bg-success/10 px-4 py-3"
+          >
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+              <div>
+                <p className="text-sm font-semibold text-success">
+                  {lastIssued.label.labelUid} issued to {lastIssued.station}
+                </p>
+                <p className="num text-xs text-success/80">
+                  {lastIssued.quantity} {lastIssued.uom} · {lastIssued.label.materialNumber}
+                </p>
+              </div>
+            </div>
+            <p className="num text-xs font-medium text-success">
+              Remaining stock: {lastIssued.remaining.toLocaleString()}
+            </p>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
-          <AnimatePresence mode="wait">
-            {error ? (
-              <motion.div
-                key={error}
-                initial={{ opacity: 0, scale: 0.97 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-5"
-              >
-                <XCircle className="h-8 w-8 text-destructive" />
-                <div>
-                  <p className="font-semibold text-destructive">Scan rejected</p>
-                  <p className="text-sm text-destructive/80">{error}</p>
-                </div>
-              </motion.div>
-            ) : confirmed ? (
-              <motion.div
-                key={confirmed.labelUid}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-              >
-                <div className="mb-3 flex items-center gap-3 rounded-xl border border-success/40 bg-success/10 p-4">
-                  <CheckCircle2 className="h-6 w-6 text-success" />
-                  <div>
-                    <p className="text-sm font-semibold text-success">Issued to {station}</p>
-                    {remaining !== null ? (
-                      <p className="num text-xs text-success/80">
-                        Remaining stock: {remaining.toLocaleString()}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-                <MaterialSummaryCard label={confirmed} />
-              </motion.div>
-            ) : pending ? (
-              <motion.div
-                key={`p-${pending.labelUid}`}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-              >
-                <MaterialSummaryCard label={pending} />
-              </motion.div>
-            ) : (
-              <EmptyState
-                title="Ready to scan"
-                description="Scan a pack label to load material details before issuing."
-                icon={<Forklift className="h-6 w-6" />}
-              />
-            )}
-          </AnimatePresence>
+      <section className="panel overflow-hidden" aria-labelledby="issued-materials-heading">
+        <div className="border-b border-border px-4 py-3">
+          <h2 id="issued-materials-heading" className="text-sm font-semibold">
+            Issued Materials
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Successfully issued packs appear here in green.
+          </p>
         </div>
 
-        <div className="panel p-5">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold">Session Log</p>
-            <Button size="sm" variant="ghost" onClick={() => setLog([])} disabled={!log.length}>
-              Clear
-            </Button>
-          </div>
-          <div className="mt-4 space-y-2">
-            {log.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No issues recorded yet.</p>
+        <Table className="min-w-[82rem]">
+          <TableHeader>
+            <TableRow>
+              <TableHead className="whitespace-nowrap">Material Code</TableHead>
+              <TableHead>Description</TableHead>
+              <TableHead className="whitespace-nowrap">GRN</TableHead>
+              <TableHead className="whitespace-nowrap">GRN Date</TableHead>
+              <TableHead className="whitespace-nowrap">Label Print Date</TableHead>
+              <TableHead className="whitespace-nowrap">Issue Date</TableHead>
+              <TableHead className="whitespace-nowrap">Issued By</TableHead>
+              <TableHead className="whitespace-nowrap text-right">Issue Qty</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {issuedRows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="h-20 text-center text-muted-foreground">
+                  No material has been issued yet.
+                </TableCell>
+              </TableRow>
             ) : (
-              log.map((l) => (
-                <motion.div
-                  key={l.id}
-                  initial={{ opacity: 0, x: 12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="rounded-lg border border-border bg-surface p-3"
+              issuedRows.map((row) => (
+                <TableRow
+                  key={row.id}
+                  className="border-success/30 bg-success/10 hover:bg-success/15"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="num text-sm font-medium">{l.labelUid}</span>
-                    <StatusBadge status={l.ok ? "Issued" : "Rejected"} />
-                  </div>
-                  <p className="num mt-1 text-xs text-muted-foreground">
-                    {l.material} · {l.qty} · {l.time}
-                  </p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{l.message}</p>
-                </motion.div>
+                  <TableCell className="num whitespace-nowrap font-medium">
+                    {row.materialNumber}
+                  </TableCell>
+                  <TableCell className="min-w-56 max-w-sm" title={row.description}>
+                    {row.description || "—"}
+                  </TableCell>
+                  <TableCell className="num">{row.grnNumber}</TableCell>
+                  <TableCell className="num whitespace-nowrap text-xs">
+                    {formatGrnDate(row.grnDate)}
+                  </TableCell>
+                  <TableCell className="num whitespace-nowrap text-xs">
+                    {formatDateTime(row.labelPrintedAt)}
+                  </TableCell>
+                  <TableCell className="num whitespace-nowrap text-xs">
+                    {formatDateTime(row.timestamp)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">{row.operator}</TableCell>
+                  <TableCell className="num whitespace-nowrap text-right font-medium">
+                    {row.quantity.toLocaleString("en-IN")} {row.uom || ""}
+                  </TableCell>
+                </TableRow>
               ))
             )}
-          </div>
-        </div>
-      </div>
-
-      <ConfirmationDialog
-        open={!!pending}
-        onOpenChange={(o) => !o && setPending(null)}
-        title="Confirm material issue"
-        description={`${pending?.quantity ?? 0} ${pending?.uom ?? ""} of ${pending?.materialNumber ?? ""} will be issued to ${station}. This cannot be undone.`}
-        confirmLabel="Confirm Issue"
-        onConfirm={() => pending && issue.mutate(pending)}
-      />
+          </TableBody>
+        </Table>
+      </section>
     </div>
   );
 }

@@ -1,7 +1,6 @@
 import {
   Boxes,
   Building2,
-  ClipboardList,
   Cog,
   FileSpreadsheet,
   FileStack,
@@ -9,7 +8,6 @@ import {
   History,
   Forklift,
   MonitorSmartphone,
-  PackageCheck,
   QrCode,
   Route as RouteIcon,
   ScrollText,
@@ -26,13 +24,11 @@ export interface NavItem {
 }
 
 export const navItems: NavItem[] = [
-  { label: "Dashboard", to: "/", icon: Gauge, group: "Operations" },
+  { label: "Dashboard", to: "/", icon: Gauge, group: "Overview" },
+  { label: "Materials", to: "/materials", icon: Boxes, group: "Master Data" },
+  { label: "Vendors", to: "/vendors", icon: Building2, group: "Master Data" },
   { label: "SAP GRN Import", to: "/import", icon: Upload, group: "Operations" },
-  { label: "GRNs", to: "/grns", icon: ClipboardList, group: "Operations" },
-  { label: "Materials", to: "/materials", icon: Boxes, group: "Operations" },
-  { label: "Vendors", to: "/vendors", icon: Building2, group: "Operations" },
-  { label: "Labels", to: "/labels", icon: QrCode, group: "Operations" },
-  { label: "Material Inward", to: "/inward", icon: PackageCheck, group: "Shop Floor" },
+  { label: "Label Material Inward", to: "/labels", icon: QrCode, group: "Operations" },
   { label: "Material Issue", to: "/issue", icon: Forklift, group: "Shop Floor" },
   { label: "Inventory", to: "/inventory", icon: Warehouse, group: "Shop Floor" },
   { label: "Traceability", to: "/traceability", icon: RouteIcon, group: "Shop Floor" },
@@ -45,4 +41,11 @@ export const navItems: NavItem[] = [
   { label: "Audit Log", to: "/audit", icon: ScrollText, group: "Administration" },
 ];
 
-export const navGroups = ["Operations", "Shop Floor", "Insights", "Administration"] as const;
+export const navGroups = [
+  "Overview",
+  "Master Data",
+  "Operations",
+  "Shop Floor",
+  "Insights",
+  "Administration",
+] as const;

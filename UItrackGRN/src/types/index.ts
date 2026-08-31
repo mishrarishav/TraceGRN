@@ -100,6 +100,7 @@ export interface GRNHeader {
 export interface MaterialLabel {
   grnLineId?: string;
   labelUid: string;
+  qrPayload?: string;
   grnNumber: string;
   materialNumber: string;
   description: string;
@@ -111,6 +112,7 @@ export interface MaterialLabel {
   status: RecordStatus;
   printCount: number;
   generatedAt: string;
+  inwardedAt?: string | undefined;
   issuedAt?: string | undefined;
   issuedBy?: string | undefined;
 }
@@ -179,8 +181,12 @@ export interface MaterialTransaction {
     | "Stored";
   labelUid?: string;
   grnNumber: string;
+  grnDate: string;
   materialNumber: string;
+  description: string;
+  labelPrintedAt?: string | null;
   quantity: number;
+  uom: string;
   station: string;
   operator: string;
   status: RecordStatus;

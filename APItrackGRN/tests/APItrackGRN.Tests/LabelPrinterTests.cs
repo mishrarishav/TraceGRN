@@ -36,14 +36,17 @@ public sealed class LabelPrinterTests
 
         var result = await printer.PrintAsync(new LabelPrintJob(
             "TEST-TRACKGRN-001", "M06030952", "COMPRESSION BUMPER", "5000515455",
-            "TEST-BATCH", 200m, "PC", 1, 5), CancellationToken.None);
+            "TEST-BATCH", 200m, "PC", 1, 5,
+            "GRN Number: 5000515455\nMaterial: M06030952\nLabel ID: TEST-TRACKGRN-001"), CancellationToken.None);
 
         Assert.True(result.Simulated);
         Assert.Equal("ZDesigner ZD230-203dpi ZPL", result.Printer);
         Assert.Contains("^PW812^LL609", result.Payload);
         Assert.Contains("^FDTRACKGRN - MATERIAL LABEL^FS", result.Payload);
         Assert.Contains("^BQN,2,7", result.Payload);
+        Assert.Contains("GRN Number: 5000515455\\0AMaterial: M06030952", result.Payload);
         Assert.Contains("^FDPACK: 1 OF 5^FS", result.Payload);
+        Assert.Contains("SANAND PLANT", result.Payload);
         Assert.EndsWith("^XZ", result.Payload);
     }
 
@@ -95,7 +98,8 @@ public sealed class LabelPrinterTests
         await requestReceived.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.Equal(LocalPrintAgentProtocol.DefaultKey, receivedKey);
         Assert.Equal("ZDesigner ZD230-203dpi ZPL", receivedPrinter);
-        Assert.Contains("^FDUID: LOCAL-AGENT-001^FS", receivedZpl);
+        Assert.DoesNotContain("^FDUID:", receivedZpl);
+        Assert.Contains("^FDLA,LOCAL-AGENT-001^FS", receivedZpl);
         Assert.False(result.Simulated);
         Assert.Equal("LocalAgent", result.Mode);
         Assert.Equal("ZDesigner ZD230-203dpi ZPL", result.Printer);

@@ -17,6 +17,15 @@ public sealed class LabelQuantityCalculatorTests
     }
 
     [Fact]
+    public void Calculate_OneThousandAtTwoHundredPerPack_CreatesFiveLabels()
+    {
+        var labels = _calculator.Calculate(1_000m, 200m);
+
+        Assert.Equal(5, labels.Count);
+        Assert.All(labels, quantity => Assert.Equal(200m, quantity));
+    }
+
+    [Fact]
     public void Calculate_PartialPacking_CreatesRemainderLabel()
     {
         var labels = _calculator.Calculate(10_500m, 1_000m);

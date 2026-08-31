@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { expectNoBodyOverflow, gotoReady, handheldOnly } from "./helpers";
 
 test.describe("handheld layouts", () => {
-  for (const path of ["/", "/inward", "/issue", "/inventory", "/traceability"]) {
+  for (const path of ["/", "/labels", "/issue", "/inventory", "/traceability"]) {
     test(`${path} fits the handheld viewport`, async ({ page }, testInfo) => {
       test.skip(handheldOnly(testInfo), "Responsive matrix only runs in handheld projects.");
       await gotoReady(page, path);

@@ -1,44 +1,60 @@
+import { QRCodeSVG } from "qrcode.react";
 import { cn } from "@/lib/utils";
 import type { MaterialLabel } from "@/types";
 
-/** Deterministic pseudo QR matrix so the preview looks like a real code. */
-function matrix(seed: string, size = 21) {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  const cells: boolean[] = [];
-  for (let i = 0; i < size * size; i++) {
-    h = (h * 1103515245 + 12345) >>> 0;
-    cells.push(((h >> 8) & 1) === 1);
-  }
-  const finder = (r: number, c: number) =>
-    (r < 7 && c < 7) || (r < 7 && c >= size - 7) || (r >= size - 7 && c < 7);
-  return cells.map((v, i) => {
-    const r = Math.floor(i / size);
-    const c = i % size;
-    if (finder(r, c)) {
-      const rr = r < 7 ? r : r - (size - 7);
-      const cc = c < 7 ? c : c - (size - 7);
-      const edge = rr === 0 || rr === 6 || cc === 0 || cc === 6;
-      const core = rr >= 2 && rr <= 4 && cc >= 2 && cc <= 4;
-      return edge || core;
-    }
-    return v;
-  });
+function pad(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function formatLabelDate(value: string) {
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (dateOnly) return `${dateOnly[3]!}-${dateOnly[2]!}-${dateOnly[1]!.slice(-2)}`;
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return `${pad(parsed.getDate())}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getFullYear() % 100)}`;
+}
+
+function formatLabelDateTime(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return `${formatLabelDate(value)}, ${pad(parsed.getHours())}-${pad(parsed.getMinutes())}-${pad(parsed.getSeconds())}`;
+}
+
+/** Keep this six-line contract aligned with the printer and issue-scanner payload parser. */
+function buildLabelQrPayload(label: MaterialLabel) {
+  return [
+    `GRN Number: ${label.grnNumber}`,
+    `Material: ${label.materialNumber}`,
+    `Quantity: ${label.quantity} ${label.uom}`,
+    `GRN Date: ${formatLabelDate(label.grnDate)}`,
+    `Label Date: ${formatLabelDateTime(label.generatedAt)}`,
+    `Label ID: ${label.labelUid}`,
+  ].join("\n");
+}
+
+function labelQrPayload(label: MaterialLabel) {
+  const persisted = (label as MaterialLabel & { qrPayload?: string }).qrPayload?.trim();
+  return persisted?.includes("\n") && persisted.includes("Label ID:")
+    ? persisted
+    : buildLabelQrPayload(label);
 }
 
 export function QRCodeArt({ value, className }: { value: string; className?: string }) {
-  const size = 21;
-  const cells = matrix(value, size);
   return (
     <div
-      className={cn("grid aspect-square w-full bg-white p-1", className)}
-      style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
+      className={cn("aspect-square w-full bg-white p-1", className)}
       aria-label={`QR code for ${value}`}
       role="img"
     >
-      {cells.map((on, i) => (
-        <span key={i} className={on ? "bg-slate-900" : "bg-white"} />
-      ))}
+      <QRCodeSVG
+        value={value}
+        level="M"
+        bgColor="#ffffff"
+        fgColor="#0f172a"
+        marginSize={0}
+        className="h-full w-full"
+      />
     </div>
   );
 }
@@ -51,6 +67,8 @@ export function QRPreview({
   label: MaterialLabel;
   config?: {
     companyName?: string;
+    brandLogoDataUrl?: string;
+    brandName?: string;
     showBatch?: boolean;
     showGrnDate?: boolean;
     showDescription?: boolean;
@@ -66,36 +84,46 @@ export function QRPreview({
     showBin: true,
     ...config,
   };
+  const qrPayload = labelQrPayload(label);
   return (
     <div
       className={cn(
-        "w-full max-w-xs rounded-lg border-2 border-dashed border-border bg-white p-3 text-slate-900 shadow-[var(--shadow-panel)]",
+        "aspect-[4/3] w-full max-w-xs rounded-lg border-2 border-dashed border-border bg-white p-2.5 text-slate-900 shadow-[var(--shadow-panel)]",
         className,
       )}
     >
-      <div className="flex items-center justify-between border-b border-slate-300 pb-2">
+      <div className="flex items-center justify-between border-b border-slate-300 pb-1.5">
         <span className="text-sm font-bold tracking-tight">{c.companyName}</span>
-        <span className="font-mono text-[10px] text-slate-500">MATERIAL LABEL</span>
-      </div>
-      <div className="mt-3 flex gap-3">
-        <div className="w-24 shrink-0">
-          <QRCodeArt value={label.labelUid} />
-          <p className="mt-1 text-center font-mono text-[9px]">{label.labelUid}</p>
+        <div className="flex min-w-0 items-center justify-end gap-2">
+          {c.brandLogoDataUrl ? (
+            <img
+              src={c.brandLogoDataUrl}
+              alt={c.brandName ? `${c.brandName} logo` : "Client logo"}
+              className="max-h-6 max-w-24 object-contain"
+            />
+          ) : null}
+          <span className="font-mono text-[9px] text-slate-500">MATERIAL LABEL</span>
         </div>
-        <div className="min-w-0 flex-1 space-y-1 text-[11px] leading-tight">
+      </div>
+      <div className="mt-2 flex gap-2.5">
+        <div className="w-[5.25rem] shrink-0">
+          <QRCodeArt value={qrPayload} />
+          <span className="sr-only">QR payload: {qrPayload}</span>
+        </div>
+        <div className="min-w-0 flex-1 space-y-0.5 text-[10px] leading-tight">
           <Row k="GRN" v={label.grnNumber} />
           <Row k="Material" v={label.materialNumber} strong />
           {c.showDescription ? (
-            <p className="truncate text-[10px] text-slate-600">{label.description}</p>
+            <p className="truncate text-[9px] text-slate-600">{label.description}</p>
           ) : null}
           <Row k="Qty" v={`${label.quantity.toLocaleString("en-IN")} ${label.uom}`} strong />
           {c.showBatch ? <Row k="Batch" v={label.batch} /> : null}
-          {c.showGrnDate ? <Row k="GRN Date" v={label.grnDate} /> : null}
+          {c.showGrnDate ? <Row k="GRN Date" v={formatLabelDate(label.grnDate)} /> : null}
           {c.showBin ? <Row k="Bin" v={label.binSequence} /> : null}
         </div>
       </div>
-      <div className="mt-2 border-t border-slate-300 pt-1 text-center font-mono text-[9px] text-slate-500">
-        Material Traceability System · Plant 1000
+      <div className="mt-1.5 border-t border-slate-300 pt-1 text-center font-mono text-[9px] text-slate-500">
+        Material Traceability System · Sanand Plant
       </div>
     </div>
   );
