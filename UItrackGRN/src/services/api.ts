@@ -218,7 +218,10 @@ export interface VendorMutation {
   isActive: boolean;
 }
 
-export const getVendors = () => apiRequest<import("@/types").Vendor[]>("/vendors");
+export const getVendors = (includeInactive = false) =>
+  apiRequest<import("@/types").Vendor[]>(
+    `/vendors${includeInactive ? "?includeInactive=true" : ""}`,
+  );
 export const createVendor = (request: VendorMutation) =>
   apiRequest<{ id: string }>("/vendors", { method: "POST", body: JSON.stringify(request) });
 export const updateVendor = (id: string, request: VendorMutation) =>

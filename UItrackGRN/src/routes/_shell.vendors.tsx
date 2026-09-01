@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Plus } from "lucide-react";
+import { Building2, Eye, EyeOff, Plus, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/PageHeader";
 import { DataTable, type Column } from "@/components/common/DataTable";
@@ -72,7 +72,11 @@ const emptyForm: VendorMutation = {
 
 function VendorsPage() {
   const queryClient = useQueryClient();
-  const { data = [], isLoading } = useQuery({ queryKey: ["vendors"], queryFn: getVendors });
+  const [includeInactive, setIncludeInactive] = useState(false);
+  const { data = [], isLoading } = useQuery({
+    queryKey: ["vendors", includeInactive],
+    queryFn: () => getVendors(includeInactive),
+  });
   const [selected, setSelected] = useState<Vendor | null>(null);
   const [form, setForm] = useState<VendorMutation>(emptyForm);
   const [aliasesText, setAliasesText] = useState("");
@@ -112,6 +116,22 @@ function VendorsPage() {
       toast.success("Vendor deactivated");
     },
     onError: (error) => toast.error("Unable to deactivate vendor", { description: error.message }),
+  });
+
+  const activate = useMutation({
+    mutationFn: (vendor: Vendor) =>
+      updateVendor(vendor.id, {
+        vendorCode: vendor.vendorCode,
+        vendorName: vendor.vendorName,
+        aliases: vendor.aliases,
+        isActive: true,
+      }),
+    onSuccess: () => {
+      void refresh();
+      setOpen(false);
+      toast.success("Vendor activated");
+    },
+    onError: (error) => toast.error("Unable to activate vendor", { description: error.message }),
   });
 
   const edit = (vendor: Vendor) => {
@@ -159,6 +179,15 @@ function VendorsPage() {
         icon={<Building2 className="h-5 w-5" />}
         actions={
           <>
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              onClick={() => setIncludeInactive((current) => !current)}
+            >
+              {includeInactive ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {includeInactive ? "Hide Inactive" : "Show Inactive"}
+            </Button>
             <MasterDataBulkUpload
               entityName="Vendor"
               entityNamePlural="Vendors"
@@ -274,8 +303,19 @@ function VendorsPage() {
                   type="button"
                   variant="destructive"
                   onClick={() => deactivate.mutate(selected.id)}
+                  disabled={deactivate.isPending}
                 >
-                  Deactivate
+                  {deactivate.isPending ? "Deactivating…" : "Deactivate"}
+                </Button>
+              ) : selected ? (
+                <Button
+                  type="button"
+                  className="gap-2 bg-success text-success-foreground hover:bg-success/90"
+                  onClick={() => activate.mutate(selected)}
+                  disabled={activate.isPending}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  {activate.isPending ? "Activating…" : "Activate Vendor"}
                 </Button>
               ) : null}
             </div>

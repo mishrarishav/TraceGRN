@@ -6,6 +6,7 @@ import {
   ArrowRight,
   BrainCircuit,
   CheckCircle2,
+  Download,
   FileSpreadsheet,
   Loader2,
   Save,
@@ -408,7 +409,14 @@ function ImportPage() {
         title="Smart GRN Import"
         description="Preview every worksheet, teach TrackGRN a format once, then import matching files directly."
         icon={<Upload className="h-5 w-5" />}
-        actions={<ExportButton name="import-preview" />}
+        actions={
+          <>
+            <Button variant="outline" size="sm" className="gap-2" onClick={downloadGrnTemplate}>
+              <Download className="h-4 w-4" /> Download Template
+            </Button>
+            <ExportButton name="import-preview" />
+          </>
+        }
       />
 
       <div className="panel flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
@@ -878,6 +886,69 @@ function ImportPage() {
       />
     </div>
   );
+}
+
+function downloadGrnTemplate() {
+  const rows = [
+    [
+      "GRN No",
+      "GRN Date",
+      "Line Item",
+      "Material",
+      "Material Description",
+      "Quantity",
+      "Pack Qty",
+      "Batch",
+      "UOM",
+      "Plant",
+      "Storage Location",
+      "PO Number",
+      "Vendor",
+      "Supplier Name",
+      "Invoice No",
+      "Invoice Date",
+      "Bin Location",
+      "Mfg Date",
+      "Exp Date",
+      "No of Labels to print",
+    ],
+    [
+      "5000515334",
+      "01-09-2026",
+      "10",
+      "M0220",
+      "Precision Mounting Bracket",
+      "1000",
+      "200",
+      "B240814-02",
+      "PCS",
+      "1000",
+      "",
+      "",
+      "V1001",
+      "Sample Vendor",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "5",
+    ],
+  ];
+  const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "trackgrn-sap-grn-import-template.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  toast.success("SAP GRN import template downloaded");
+}
+
+function csvCell(value: string) {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 function WorkbookGrid({
