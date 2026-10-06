@@ -1,44 +1,7 @@
 import { QRCodeSVG } from "qrcode.react";
 import { cn } from "@/lib/utils";
+import { formatLabelDate, labelQrPayload } from "@/lib/label-content";
 import type { MaterialLabel } from "@/types";
-
-function pad(value: number) {
-  return String(value).padStart(2, "0");
-}
-
-function formatLabelDate(value: string) {
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
-  if (dateOnly) return `${dateOnly[3]!}-${dateOnly[2]!}-${dateOnly[1]!.slice(-2)}`;
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return `${pad(parsed.getDate())}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getFullYear() % 100)}`;
-}
-
-function formatLabelDateTime(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return `${formatLabelDate(value)}, ${pad(parsed.getHours())}-${pad(parsed.getMinutes())}-${pad(parsed.getSeconds())}`;
-}
-
-/** Keep this six-line contract aligned with the printer and issue-scanner payload parser. */
-function buildLabelQrPayload(label: MaterialLabel) {
-  return [
-    `GRN Number: ${label.grnNumber}`,
-    `Material: ${label.materialNumber}`,
-    `Quantity: ${label.quantity} ${label.uom}`,
-    `GRN Date: ${formatLabelDate(label.grnDate)}`,
-    `Label Date: ${formatLabelDateTime(label.generatedAt)}`,
-    `Label ID: ${label.labelUid}`,
-  ].join("\n");
-}
-
-function labelQrPayload(label: MaterialLabel) {
-  const persisted = (label as MaterialLabel & { qrPayload?: string }).qrPayload?.trim();
-  return persisted?.includes("\n") && persisted.includes("Label ID:")
-    ? persisted
-    : buildLabelQrPayload(label);
-}
 
 export function QRCodeArt({ value, className }: { value: string; className?: string }) {
   return (

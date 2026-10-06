@@ -2,7 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: "**/ui-business-offline.spec.ts",
+  testMatch: [
+    "**/ui-business-offline.spec.ts",
+    "**/label-scan-offline.spec.ts",
+    "**/label-table-offline.spec.ts",
+  ],
   fullyParallel: false,
   workers: 1,
   timeout: 30_000,

@@ -39,9 +39,16 @@ Never commit rejected rows without resolving their stated reason. A revised SAP 
 
 Open **Labels** to review generated pack UIDs, preview the 100 × 75 mm layout, select a printer and control optional label fields.
 
-- **Batch Print** sends the currently filtered set to the selected printer.
+- **Batch Print** uses all matching records across pages after search, status and column filters, in the current table sort order. For example, 60 matching labels out of 2,000 records produces a batch of those 60 labels if all are awaiting print/inward. **Batch PDF** follows the same view and also includes previously inwarded labels; blocked/cancelled labels are excluded.
+- **Columns** stays open while you check/uncheck multiple columns. Select **Done**, click outside, or press Escape to close it.
+- **Filters** shows a filter input under each data column. Filters combine with search and status. **Clear filters** clears the column filters. Click a column heading to switch ascending/descending sorting.
+- **Sr. No.** appears immediately before **Label No.** and numbers the current filtered/sorted list from 1, continuing across pages.
 - **Reprint** requires confirmation and is recorded for audit.
 - **Bin Seq** means pack sequence (for example, `03 of 10`); it is not rack/aisle/bin location management.
+
+Choose **Print output > PDF** in the label preview to open **Open Label PDF** in a new window. For multiple labels, use **Batch PDF**, select the From/To range, and open the resulting PDF. Each label has a separate 100 x 75 mm page and the same QR payload as the on-screen preview. Download the PDF for offline printing, then select the local Zebra Windows printer and print at **Actual size / 100%** with 100 x 75 mm paper.
+
+PDF export works from labels already loaded in the browser and does not mark them inward or increase their print count. Loading fresh GRN/label data still requires the API. **Printer** output uses the configured printer/Agent and the existing print-and-inward flow. Under **Configuration > Plant & Hardware**, select **PDF > Open Test PDF** to check the paper size and QR without connecting a Print Agent.
 
 ## 5. Material inward
 
@@ -59,7 +66,7 @@ The system rejects an unknown, already inwarded, already issued, blocked or canc
 ![Material issue](playwright-evidence/04-material-issue-annotated.png)
 
 1. Open **Material Issue** and confirm the production station.
-2. Scan the pack label.
+2. Scan the pack label and press Enter (or use the scanner's Enter suffix). A full QR payload is accepted: only its **Label ID** value is used; GRN, material, quantity and date lines are ignored. A plain Label UID also works. For pasted data, click **Scan & Issue** or press Enter. The system reads the actual material and quantity from the saved label record.
 3. Review material, quantity, GRN and batch in the confirmation dialog.
 4. Select **Confirm Issue** once.
 

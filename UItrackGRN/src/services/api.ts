@@ -14,6 +14,7 @@ import type {
   User,
 } from "@/types";
 import { createRuntimeId } from "@/lib/id";
+import { extractLabelUid } from "@/lib/label-scan";
 
 export const API_BASE_URL = import.meta.env["VITE_API_BASE_URL"] || "/api";
 export const PRINT_AGENT_INSTALLER_URL = `${API_BASE_URL.replace(/\/api\/?$/, "")}/downloads/TrackGRN-PrintAgent.msi`;
@@ -389,9 +390,11 @@ export async function scanLabel(
   code: string,
   purpose: ScanPurpose = "lookup",
 ): Promise<ScanOutcome> {
+  const labelUid = extractLabelUid(code);
+  if (!labelUid) throw new Error("Label ID not found. Scan the full QR or enter a Label UID.");
   try {
     const label = await apiRequest<MaterialLabel>(
-      `/labels/${encodeURIComponent(code.trim())}?purpose=${purpose}`,
+      `/labels/${encodeURIComponent(labelUid)}?purpose=${purpose}`,
     );
     return { ok: true, label };
   } catch (error) {

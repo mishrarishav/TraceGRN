@@ -1,10 +1,23 @@
 import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Cog, Download, ImageUp, Laptop, Printer, Radar, Trash2, Wifi } from "lucide-react";
+import {
+  Cog,
+  Download,
+  FileText,
+  ImageUp,
+  Laptop,
+  Printer,
+  Radar,
+  Trash2,
+  Wifi,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/PageHeader";
 import { LoadingSkeleton } from "@/components/common/LoadingSkeleton";
+import { PrintOutputSelect, type PrintOutput } from "@/components/common/PrintOutputSelect";
+import { createTestLabel } from "@/lib/label-content";
+import { openLabelPdf } from "@/lib/label-pdf";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -136,6 +149,7 @@ function ConfigurationPage() {
   const { data, isLoading } = useQuery({ queryKey: ["configuration"], queryFn: getConfiguration });
   const [form, setForm] = useState<FormState>(initial);
   const [printerForm, setPrinterForm] = useState<PrinterFormState>(initialPrinter);
+  const [printOutput, setPrintOutput] = useState<PrintOutput>("Printer");
   const [discovery, setDiscovery] = useState<PrinterDiscoveryResult | null>(null);
   const [agentDiscovery, setAgentDiscovery] = useState<PrintAgentDiscoveryResult | null>(null);
   useEffect(() => {
@@ -607,331 +621,371 @@ function ConfigurationPage() {
             <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
               Printer connection
             </p>
-            {printerForm.mode === "RawTcp" ? (
-              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="flex items-center gap-2 font-medium">
-                      <Wifi className="h-4 w-4 text-primary" /> Find printer on this LAN
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Scans the API machine&apos;s active local subnet for Zebra/RAW TCP port 9100.
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="gap-2"
-                    onClick={() => discoverPrinters.mutate()}
-                    disabled={discoverPrinters.isPending}
-                  >
-                    <Radar
-                      className={discoverPrinters.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"}
-                    />
-                    {discoverPrinters.isPending ? "Scanning LAN…" : "Find Printer IP"}
-                  </Button>
-                </div>
-                {discovery ? (
-                  <div className="mt-3 space-y-2 border-t border-primary/15 pt-3">
-                    <p className="text-xs text-muted-foreground">
-                      Scanned {discovery.scannedHosts} addresses
-                      {discovery.networks.length > 0
-                        ? ` · ${discovery.networks.map((network) => `${network.interfaceName} ${network.subnet}`).join(", ")}`
-                        : " · no active private LAN detected"}
-                    </p>
-                    {discovery.printers.length > 0 ? (
-                      discovery.printers.map((printer) => (
-                        <div
-                          key={`${printer.host}:${printer.port}`}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background p-2"
-                        >
-                          <div>
-                            <p className="num font-medium">
-                              {printer.host}:{printer.port}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {printer.source} · responded in {printer.latencyMs} ms
-                            </p>
-                          </div>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => {
-                              setPrinterForm({
-                                ...printerForm,
-                                mode: "RawTcp",
-                                printerName: printer.printerName,
-                                host: printer.host,
-                                port: printer.port,
-                              });
-                              toast.success(`Selected printer ${printer.host}`);
-                            }}
-                          >
-                            Use this printer
-                          </Button>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        No device accepted port 9100. A USB-only printer has no network IP; connect
-                        Ethernet/Wi-Fi or use the Windows shared-printer mode.
-                      </p>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            <Field label="Connection mode">
-              <Select
-                value={printerForm.mode}
-                onValueChange={(mode) =>
-                  setPrinterForm({
-                    ...printerForm,
-                    mode: mode as PrinterFormState["mode"],
-                    host: null,
-                    port:
-                      mode === "RawTcp" ? 9100 : mode === "LocalAgent" ? 17891 : printerForm.port,
-                  })
-                }
-              >
-                <SelectTrigger aria-label="Printer connection mode">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="RawTcp">Network printer (IP / port 9100)</SelectItem>
-                  <SelectItem value="LocalAgent">Print locally via installed Agent</SelectItem>
-                  <SelectItem value="WindowsSpooler">USB or Windows shared printer</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            {printerForm.mode === "LocalAgent" ? (
+            <PrintOutputSelect value={printOutput} onChange={setPrintOutput} />
+            {printOutput === "PDF" ? (
               <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="flex items-center gap-2 font-medium">
-                      <Laptop className="h-4 w-4 text-primary" /> Print from another Windows laptop
-                    </p>
-                    <p className="mt-1 max-w-xl text-xs text-muted-foreground">
-                      Download and install the Agent as Administrator on the laptop where the USB or
-                      Windows printer is connected. It starts automatically with Windows.
-                    </p>
-                  </div>
-                  <Button type="button" variant="outline" className="gap-2" asChild>
-                    <a href={PRINT_AGENT_INSTALLER_URL} download>
-                      <Download className="h-4 w-4" /> Download MSI
-                    </a>
-                  </Button>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-primary/15 pt-3">
-                  <p className="text-xs text-muted-foreground">
-                    After installation, keep that laptop and printer powered on and on this LAN.
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="gap-2"
-                    onClick={() => discoverAgents.mutate()}
-                    disabled={discoverAgents.isPending}
-                  >
-                    <Radar
-                      className={discoverAgents.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"}
-                    />
-                    {discoverAgents.isPending ? "Scanning LAN…" : "Find Installed Print Agents"}
-                  </Button>
-                </div>
-                {agentDiscovery ? (
-                  <div className="space-y-2 border-t border-primary/15 pt-3">
-                    <p className="text-xs text-muted-foreground">
-                      Scanned {agentDiscovery.scannedHosts} addresses · found{" "}
-                      {agentDiscovery.agents.length} agent(s)
-                    </p>
-                    {agentDiscovery.agents.length > 0 ? (
-                      agentDiscovery.agents.map((agent) => (
-                        <div
-                          key={`${agent.host}:${agent.port}`}
-                          className="rounded-md border border-border bg-background p-3"
-                        >
-                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                              <p className="font-medium">{agent.machineName}</p>
-                              <p className="num text-xs text-muted-foreground">
-                                {agent.host}:{agent.port} · Agent v{agent.version} ·{" "}
-                                {agent.latencyMs} ms
-                              </p>
+                <p className="font-medium">Test label PDF</p>
+                <p className="text-xs text-muted-foreground">
+                  Open a 100 x 75 mm test label in a new window, then download or print it from the
+                  PDF viewer. No Print Agent is needed for PDF export.
+                </p>
+                <Button
+                  type="button"
+                  className="gap-2"
+                  onClick={() => {
+                    try {
+                      openLabelPdf([createTestLabel()], form.plantConfiguration);
+                      toast.success("Test label PDF opened");
+                    } catch (error) {
+                      toast.error("PDF export failed", {
+                        description:
+                          error instanceof Error ? error.message : "Unable to create the PDF.",
+                      });
+                    }
+                  }}
+                >
+                  <FileText className="h-4 w-4" /> Open Test PDF
+                </Button>
+              </div>
+            ) : (
+              <>
+                {printerForm.mode === "RawTcp" ? (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="flex items-center gap-2 font-medium">
+                          <Wifi className="h-4 w-4 text-primary" /> Find printer on this LAN
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Scans the API machine&apos;s active local subnet for Zebra/RAW TCP port
+                          9100.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="gap-2"
+                        onClick={() => discoverPrinters.mutate()}
+                        disabled={discoverPrinters.isPending}
+                      >
+                        <Radar
+                          className={
+                            discoverPrinters.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"
+                          }
+                        />
+                        {discoverPrinters.isPending ? "Scanning LAN…" : "Find Printer IP"}
+                      </Button>
+                    </div>
+                    {discovery ? (
+                      <div className="mt-3 space-y-2 border-t border-primary/15 pt-3">
+                        <p className="text-xs text-muted-foreground">
+                          Scanned {discovery.scannedHosts} addresses
+                          {discovery.networks.length > 0
+                            ? ` · ${discovery.networks.map((network) => `${network.interfaceName} ${network.subnet}`).join(", ")}`
+                            : " · no active private LAN detected"}
+                        </p>
+                        {discovery.printers.length > 0 ? (
+                          discovery.printers.map((printer) => (
+                            <div
+                              key={`${printer.host}:${printer.port}`}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background p-2"
+                            >
+                              <div>
+                                <p className="num font-medium">
+                                  {printer.host}:{printer.port}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {printer.source} · responded in {printer.latencyMs} ms
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => {
+                                  setPrinterForm({
+                                    ...printerForm,
+                                    mode: "RawTcp",
+                                    printerName: printer.printerName,
+                                    host: printer.host,
+                                    port: printer.port,
+                                  });
+                                  toast.success(`Selected printer ${printer.host}`);
+                                }}
+                              >
+                                Use this printer
+                              </Button>
                             </div>
-                          </div>
-                          {agent.printers.length > 0 ? (
-                            <div className="space-y-2">
-                              {agent.printers.map((printerName) => (
-                                <div
-                                  key={printerName}
-                                  className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-surface p-2"
-                                >
-                                  <span className="text-xs font-medium">{printerName}</span>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    onClick={() => {
-                                      setPrinterForm({
-                                        ...printerForm,
-                                        mode: "LocalAgent",
-                                        host: agent.host,
-                                        port: agent.port,
-                                        printerName,
-                                      });
-                                      toast.success(
-                                        `Selected ${printerName} on ${agent.machineName}`,
-                                      );
-                                    }}
-                                  >
-                                    Use this printer
-                                  </Button>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">
-                              Agent is online, but Windows reported no installed printer queues.
-                            </p>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        No Agent found. Install the MSI on the printer laptop and allow the Windows
-                        private-network prompt, then scan again.
-                      </p>
-                    )}
+                          ))
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            No device accepted port 9100. A USB-only printer has no network IP;
+                            connect Ethernet/Wi-Fi or use the Windows shared-printer mode.
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
-              </div>
-            ) : null}
-            <Field
-              label={
-                printerForm.mode === "WindowsSpooler" || printerForm.mode === "LocalAgent"
-                  ? "Exact Windows printer queue"
-                  : "Printer display name"
-              }
-            >
-              <Input
-                aria-label="Printer name"
-                placeholder={
-                  printerForm.mode === "WindowsSpooler" || printerForm.mode === "LocalAgent"
-                    ? "ZDesigner ZD230-203dpi ZPL or \\\\PC\\Share"
-                    : "Zebra Receiving Bay"
-                }
-                value={printerForm.printerName}
-                onChange={(event) =>
-                  setPrinterForm({ ...printerForm, printerName: event.target.value })
-                }
-              />
-            </Field>
-            {printerForm.mode === "RawTcp" || printerForm.mode === "LocalAgent" ? (
-              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Connection mode">
+                  <Select
+                    value={printerForm.mode}
+                    onValueChange={(mode) =>
+                      setPrinterForm({
+                        ...printerForm,
+                        mode: mode as PrinterFormState["mode"],
+                        host: null,
+                        port:
+                          mode === "RawTcp"
+                            ? 9100
+                            : mode === "LocalAgent"
+                              ? 17891
+                              : printerForm.port,
+                      })
+                    }
+                  >
+                    <SelectTrigger aria-label="Printer connection mode">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="RawTcp">Network printer (IP / port 9100)</SelectItem>
+                      <SelectItem value="LocalAgent">Print locally via installed Agent</SelectItem>
+                      <SelectItem value="WindowsSpooler">USB or Windows shared printer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                {printerForm.mode === "LocalAgent" ? (
+                  <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="flex items-center gap-2 font-medium">
+                          <Laptop className="h-4 w-4 text-primary" /> Print from another Windows
+                          laptop
+                        </p>
+                        <p className="mt-1 max-w-xl text-xs text-muted-foreground">
+                          Download and install the Agent as Administrator on the laptop where the
+                          USB or Windows printer is connected. It starts automatically with Windows.
+                        </p>
+                      </div>
+                      <Button type="button" variant="outline" className="gap-2" asChild>
+                        <a href={PRINT_AGENT_INSTALLER_URL} download>
+                          <Download className="h-4 w-4" /> Download MSI
+                        </a>
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-primary/15 pt-3">
+                      <p className="text-xs text-muted-foreground">
+                        After installation, keep that laptop and printer powered on and on this LAN.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="gap-2"
+                        onClick={() => discoverAgents.mutate()}
+                        disabled={discoverAgents.isPending}
+                      >
+                        <Radar
+                          className={discoverAgents.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"}
+                        />
+                        {discoverAgents.isPending ? "Scanning LAN…" : "Find Installed Print Agents"}
+                      </Button>
+                    </div>
+                    {agentDiscovery ? (
+                      <div className="space-y-2 border-t border-primary/15 pt-3">
+                        <p className="text-xs text-muted-foreground">
+                          Scanned {agentDiscovery.scannedHosts} addresses · found{" "}
+                          {agentDiscovery.agents.length} agent(s)
+                        </p>
+                        {agentDiscovery.agents.length > 0 ? (
+                          agentDiscovery.agents.map((agent) => (
+                            <div
+                              key={`${agent.host}:${agent.port}`}
+                              className="rounded-md border border-border bg-background p-3"
+                            >
+                              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <p className="font-medium">{agent.machineName}</p>
+                                  <p className="num text-xs text-muted-foreground">
+                                    {agent.host}:{agent.port} · Agent v{agent.version} ·{" "}
+                                    {agent.latencyMs} ms
+                                  </p>
+                                </div>
+                              </div>
+                              {agent.printers.length > 0 ? (
+                                <div className="space-y-2">
+                                  {agent.printers.map((printerName) => (
+                                    <div
+                                      key={printerName}
+                                      className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-surface p-2"
+                                    >
+                                      <span className="text-xs font-medium">{printerName}</span>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        onClick={() => {
+                                          setPrinterForm({
+                                            ...printerForm,
+                                            mode: "LocalAgent",
+                                            host: agent.host,
+                                            port: agent.port,
+                                            printerName,
+                                          });
+                                          toast.success(
+                                            `Selected ${printerName} on ${agent.machineName}`,
+                                          );
+                                        }}
+                                      >
+                                        Use this printer
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">
+                                  Agent is online, but Windows reported no installed printer queues.
+                                </p>
+                              )}
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            No Agent found. Install the MSI on the printer laptop and allow the
+                            Windows private-network prompt, then scan again.
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 <Field
                   label={
-                    printerForm.mode === "LocalAgent"
-                      ? "Print Agent laptop IP / hostname"
-                      : "Printer IP / hostname"
+                    printerForm.mode === "WindowsSpooler" || printerForm.mode === "LocalAgent"
+                      ? "Exact Windows printer queue"
+                      : "Printer display name"
                   }
                 >
                   <Input
-                    aria-label={
-                      printerForm.mode === "LocalAgent"
-                        ? "Print Agent IP or hostname"
-                        : "Printer IP or hostname"
-                    }
-                    inputMode="decimal"
+                    aria-label="Printer name"
                     placeholder={
-                      printerForm.mode === "LocalAgent" ? "192.168.1.24" : "192.168.1.50"
+                      printerForm.mode === "WindowsSpooler" || printerForm.mode === "LocalAgent"
+                        ? "ZDesigner ZD230-203dpi ZPL or \\\\PC\\Share"
+                        : "Zebra Receiving Bay"
                     }
-                    value={printerForm.host ?? ""}
+                    value={printerForm.printerName}
                     onChange={(event) =>
-                      setPrinterForm({ ...printerForm, host: event.target.value })
+                      setPrinterForm({ ...printerForm, printerName: event.target.value })
                     }
                   />
                 </Field>
-                <Field label={printerForm.mode === "LocalAgent" ? "Agent port" : "Raw TCP port"}>
-                  <Input
-                    aria-label="Printer port"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={printerForm.port}
-                    onChange={(event) =>
-                      setPrinterForm({ ...printerForm, port: Number(event.target.value) })
-                    }
-                  />
-                </Field>
-              </div>
-            ) : null}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Printer resolution">
-                <Select
-                  value={String(printerForm.dpi)}
-                  onValueChange={(dpi) => setPrinterForm({ ...printerForm, dpi: Number(dpi) })}
-                >
-                  <SelectTrigger aria-label="Printer resolution">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="203">203 dpi</SelectItem>
-                    <SelectItem value="300">300 dpi</SelectItem>
-                    <SelectItem value="600">600 dpi</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              {printerForm.mode === "RawTcp" || printerForm.mode === "LocalAgent" ? (
-                <Field label="Connection timeout">
-                  <Input
-                    aria-label="Printer connection timeout"
-                    type="number"
-                    min={1}
-                    max={30}
-                    value={printerForm.connectionTimeoutSeconds}
-                    onChange={(event) =>
-                      setPrinterForm({
-                        ...printerForm,
-                        connectionTimeoutSeconds: Number(event.target.value),
-                      })
-                    }
-                  />
-                </Field>
-              ) : null}
-            </div>
-            <div className="rounded-lg border border-border bg-surface p-3 text-xs">
-              <p className="font-medium">Currently saved</p>
-              <p className="num mt-1 text-muted-foreground">
-                {data?.printing.mode} · {data?.printing.printerName}
-                {data?.printing.host ? ` · ${data.printing.host}:${data.printing.port}` : ""}
-              </p>
-              <p className="mt-2 text-muted-foreground">
-                Network mode sends directly to a printer IP. Local Agent mode sends through the
-                selected Windows laptop, so the site can be opened and printed from any phone or
-                computer on the same network.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                className="gap-2"
-                onClick={() => configurePrinter.mutate()}
-                disabled={configurePrinter.isPending}
-              >
-                <Printer className="h-4 w-4" />
-                {configurePrinter.isPending ? "Connecting…" : "Save & Test Printer"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="gap-2"
-                onClick={() => printerTest.mutate()}
-                disabled={printerTest.isPending || !data?.printing.hardwareReady}
-              >
-                <Printer className="h-4 w-4" />
-                {printerTest.isPending ? "Sending…" : "Test Current Printer"}
-              </Button>
-            </div>
+                {printerForm.mode === "RawTcp" || printerForm.mode === "LocalAgent" ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field
+                      label={
+                        printerForm.mode === "LocalAgent"
+                          ? "Print Agent laptop IP / hostname"
+                          : "Printer IP / hostname"
+                      }
+                    >
+                      <Input
+                        aria-label={
+                          printerForm.mode === "LocalAgent"
+                            ? "Print Agent IP or hostname"
+                            : "Printer IP or hostname"
+                        }
+                        inputMode="decimal"
+                        placeholder={
+                          printerForm.mode === "LocalAgent" ? "192.168.1.24" : "192.168.1.50"
+                        }
+                        value={printerForm.host ?? ""}
+                        onChange={(event) =>
+                          setPrinterForm({ ...printerForm, host: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field
+                      label={printerForm.mode === "LocalAgent" ? "Agent port" : "Raw TCP port"}
+                    >
+                      <Input
+                        aria-label="Printer port"
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={printerForm.port}
+                        onChange={(event) =>
+                          setPrinterForm({ ...printerForm, port: Number(event.target.value) })
+                        }
+                      />
+                    </Field>
+                  </div>
+                ) : null}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Printer resolution">
+                    <Select
+                      value={String(printerForm.dpi)}
+                      onValueChange={(dpi) => setPrinterForm({ ...printerForm, dpi: Number(dpi) })}
+                    >
+                      <SelectTrigger aria-label="Printer resolution">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="203">203 dpi</SelectItem>
+                        <SelectItem value="300">300 dpi</SelectItem>
+                        <SelectItem value="600">600 dpi</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  {printerForm.mode === "RawTcp" || printerForm.mode === "LocalAgent" ? (
+                    <Field label="Connection timeout">
+                      <Input
+                        aria-label="Printer connection timeout"
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={printerForm.connectionTimeoutSeconds}
+                        onChange={(event) =>
+                          setPrinterForm({
+                            ...printerForm,
+                            connectionTimeoutSeconds: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </Field>
+                  ) : null}
+                </div>
+                <div className="rounded-lg border border-border bg-surface p-3 text-xs">
+                  <p className="font-medium">Currently saved</p>
+                  <p className="num mt-1 text-muted-foreground">
+                    {data?.printing.mode} · {data?.printing.printerName}
+                    {data?.printing.host ? ` · ${data.printing.host}:${data.printing.port}` : ""}
+                  </p>
+                  <p className="mt-2 text-muted-foreground">
+                    Network mode sends directly to a printer IP. Local Agent mode sends through the
+                    selected Windows laptop, so the site can be opened and printed from any phone or
+                    computer on the same network.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    className="gap-2"
+                    onClick={() => configurePrinter.mutate()}
+                    disabled={configurePrinter.isPending}
+                  >
+                    <Printer className="h-4 w-4" />
+                    {configurePrinter.isPending ? "Connecting…" : "Save & Test Printer"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => printerTest.mutate()}
+                    disabled={printerTest.isPending || !data?.printing.hardwareReady}
+                  >
+                    <Printer className="h-4 w-4" />
+                    {printerTest.isPending ? "Sending…" : "Test Current Printer"}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </TabsContent>
       </Tabs>

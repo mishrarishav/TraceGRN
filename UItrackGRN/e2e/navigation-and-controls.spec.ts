@@ -60,6 +60,7 @@ test.describe("navigation and operational controls", () => {
     await page.getByRole("button", { name: "Columns" }).click();
     await page.getByRole("menuitemcheckbox", { name: "Batch" }).click();
     await expect(table.getByRole("columnheader", { name: "Batch" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Done", exact: true }).click();
 
     await page.getByRole("button", { name: "Export" }).click();
     await page.getByRole("menuitem", { name: "Export CSV" }).click();

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
@@ -31,6 +31,7 @@ import {
   scanLabel,
 } from "@/services/api";
 import type { MaterialLabel } from "@/types";
+import { extractLabelUid } from "@/lib/label-scan";
 
 export const Route = createFileRoute("/_shell/issue")({
   head: () => ({
@@ -121,7 +122,6 @@ function IssuePage() {
       setLastIssued(null);
       toast.error("Issue failed", { description: message });
     },
-    onSettled: () => scannerRef.current?.focus(),
   });
 
   const scan = useMutation({
@@ -132,7 +132,6 @@ function IssuePage() {
         const message = scanErrorMessage[res.error];
         setError(message);
         toast.error("Scan rejected", { description: `${code} · ${message}` });
-        scannerRef.current?.focus();
         return;
       }
       setError(null);
@@ -144,24 +143,25 @@ function IssuePage() {
       setError(message);
       setLastIssued(null);
       toast.error("Scan failed", { description: message });
-      scannerRef.current?.focus();
     },
   });
 
   const busy = scan.isPending || issue.isPending;
+  useEffect(() => {
+    if (!busy) scannerRef.current?.focus();
+  }, [busy]);
+
   const submitScan = (candidate = scanCode) => {
-    const code = candidate.trim();
-    if (!code || busy || !station) return;
+    if (!candidate.trim() || busy || !station) return;
+    const code = extractLabelUid(candidate);
+    if (!code) {
+      setError("Label ID not found. Scan the full QR or enter a Label UID.");
+      setLastIssued(null);
+      scannerRef.current?.focus();
+      return;
+    }
     setScanCode("");
     scan.mutate(code);
-  };
-
-  const scanIsComplete = (candidate: string) => {
-    const normalized = candidate.trim();
-    return (
-      /^LBL-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i.test(normalized) ||
-      /(?:^|[\r\n])\s*Label\s+(?:ID|UID)\s*:\s*LBL-[A-Z0-9-]+\s*$/i.test(normalized)
-    );
   };
 
   return (
@@ -219,7 +219,7 @@ function IssuePage() {
                 disabled={busy}
                 onChange={(event) => setScanCode(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && scanIsComplete(event.currentTarget.value)) {
+                  if (event.key === "Enter" && extractLabelUid(event.currentTarget.value)) {
                     event.preventDefault();
                     submitScan(event.currentTarget.value);
                   }
@@ -229,6 +229,9 @@ function IssuePage() {
                 className="num min-h-11 resize-none py-3 pl-9 tracking-wide"
               />
             </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Full QR scans use only the Label ID. Other fields are ignored.
+            </p>
           </div>
 
           <Button
