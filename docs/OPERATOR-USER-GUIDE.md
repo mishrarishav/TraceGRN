@@ -37,29 +37,19 @@ Never commit rejected rows without resolving their stated reason. A revised SAP 
 
 ## 4. Labels
 
-Open **Labels** to review generated pack UIDs, preview the 100 × 75 mm layout, select a printer and control optional label fields.
+Open **Sticker Printing** after committing the SAP Excel import. New pack labels are generated and inwarded automatically, so no separate inward scan is required.
 
-- **Batch Print** uses all matching records across pages after search, status and column filters, in the current table sort order. For example, 60 matching labels out of 2,000 records produces a batch of those 60 labels if all are awaiting print/inward. **Batch PDF** follows the same view and also includes previously inwarded labels; blocked/cancelled labels are excluded.
-- **Columns** stays open while you check/uncheck multiple columns. Select **Done**, click outside, or press Escape to close it.
-- **Filters** shows a filter input under each data column. Filters combine with search and status. **Clear filters** clears the column filters. Click a column heading to switch ascending/descending sorting.
-- **Sr. No.** appears immediately before **Label No.** and numbers the current filtered/sorted list from 1, continuing across pages.
-- **Reprint** requires confirmation and is recorded for audit.
-- **Bin Seq** means pack sequence (for example, `03 of 10`); it is not rack/aisle/bin location management.
+- **Pending Printing** shows one row per GRN, material and UOM, with **12 rows per page**. Quantity and label counts cover all unprinted packs, including groups larger than 2,000 labels. Search and filters run on the server.
+- **Print labels** opens every pending pack in that part. **Print All** opens all matching parts across pages. Select a From/To range of up to 500 labels per run.
+- **Printer** sends each sticker to the configured Zebra printer/Print Agent. Retry sends only the failures. A simulation result is explicitly identified and does not establish that a physical sticker printed.
+- **PDF** opens one **100 x 75 mm** page per selected pack and records the output in history. Print at **Actual size / 100%** with 100 x 75 mm paper. API access is required to record the output.
+- **Reprint History** contains printed/PDF-prepared labels, including older records. Search by Label ID, GRN or part, select the original sticker and enter a reprint reason. Reprinting retains the Label ID and does not add stock or repeat inward.
 
-Choose **Print output > PDF** in the label preview to open **Open Label PDF** in a new window. For multiple labels, use **Batch PDF**, select the From/To range, and open the resulting PDF. Each label has a separate 100 x 75 mm page and the same QR payload as the on-screen preview. Download the PDF for offline printing, then select the local Zebra Windows printer and print at **Actual size / 100%** with 100 x 75 mm paper.
+Every QR contains **only the Label ID**. Material, GRN, quantity, date and pack information remain readable. Batch is omitted from the preview and both output formats. Old multiline stickers remain compatible with the scanner.
 
-PDF export works from labels already loaded in the browser and does not mark them inward or increase their print count. Loading fresh GRN/label data still requires the API. **Printer** output uses the configured printer/Agent and the existing print-and-inward flow. Under **Configuration > Plant & Hardware**, select **PDF > Open Test PDF** to check the paper size and QR without connecting a Print Agent.
+## 5. Automatic material inward
 
-## 5. Material inward
-
-![Material inward](playwright-evidence/03-material-inward-annotated.png)
-
-1. Open **Material Inward**.
-2. Scan with the Zebra keyboard wedge, or enter the label UID and press Enter.
-3. The system accepts Generated/Printed packs and changes them to Inwarded.
-4. Watch the green confirmation and Session Log.
-
-The system rejects an unknown, already inwarded, already issued, blocked or cancelled label. Do not attach a replacement QR with a different UID to bypass a rejection.
+Excel import and manual label generation record one inward transaction per new pack. Unprinted packs can still be reconciled when SAP quantities or packing standards change. Once a pack has been printed or issued, reconciliation protects it. Reprints never repeat inward. The legacy inward endpoint rejects duplicate processing.
 
 ## 6. Issue material to production
 
@@ -103,7 +93,7 @@ Administrators can require an issue station and control the duplicate-inward pol
 |---|---|
 | Label not found in system | Check the full UID and confirm that its GRN import/label generation completed |
 | Label already inwarded | Do not inward again; use Traceability to verify the first event |
-| Label must be inwarded before issue | Complete physical inward first |
+| Label must be inwarded before issue | Generate the pack or check the imported label status |
 | Label already issued to production | Stop and verify the physical pack and trace history |
 | Label is blocked/cancelled | Contact the store manager or administrator |
 | You are offline | Restore the plant LAN before issuing |

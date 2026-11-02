@@ -49,7 +49,7 @@ public sealed class SystemController(TrackGrnDbContext dbContext, IWebHostEnviro
         return Ok(new
         {
             appName = "TrackGRN",
-            version = "1.1.2",
+            version = "1.2.0",
             configuration.ClientName,
             configuration.ClientLogoDataUrl
         });

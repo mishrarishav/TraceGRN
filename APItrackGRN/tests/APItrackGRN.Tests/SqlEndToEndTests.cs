@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace APItrackGRN.Tests;
 
@@ -122,7 +123,7 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
 
         var labels = await client.GetFromJsonAsync<List<LabelDto>>($"/api/labels?grn={imported.GrnNumber}");
         var label = Assert.Single(labels!);
-        Assert.Equal("Generated", label.Status);
+        Assert.Equal("Inwarded", label.Status);
         using var beforePrintTrace = JsonDocument.Parse(await client.GetStringAsync(
             $"/api/traceability?q={Uri.EscapeDataString(label.LabelUid)}"));
         var beforePrintTitles = beforePrintTrace.RootElement.GetProperty("steps").EnumerateArray()
@@ -246,7 +247,7 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var branding = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("TrackGRN", branding.GetProperty("appName").GetString());
-        Assert.Equal("1.1.2", branding.GetProperty("version").GetString());
+        Assert.Equal("1.2.0", branding.GetProperty("version").GetString());
         Assert.Equal("Test Client Industries", branding.GetProperty("clientName").GetString());
         Assert.Equal(logo, branding.GetProperty("clientLogoDataUrl").GetString());
     }
@@ -258,7 +259,7 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
         var identity = $"RACE{Guid.NewGuid():N}"[..14].ToUpperInvariant();
         var imported = await ImportAndCommit(client, identity, 500m, 500m);
         var label = (await client.GetFromJsonAsync<List<LabelDto>>($"/api/labels?grn={imported.GrnNumber}"))!.Single();
-        Assert.Equal(HttpStatusCode.OK,
+        Assert.Equal(HttpStatusCode.Conflict,
             (await client.PostAsJsonAsync("/api/inward", new { labelUid = label.LabelUid, stationCode = "STORE-INWARD-01" })).StatusCode);
 
         var payload = new { labelUid = label.LabelUid, stationCode = "STORE-EXIT-01", deviceId = "RACE-TEST" };
@@ -438,6 +439,57 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
         Assert.Contains(vendor.Aliases, alias => alias.AliasName == "Kamal CED");
     }
 
+    [Fact]
+    public async Task Pdf_output_moves_only_selected_labels_to_history_and_reprint_does_not_add_stock()
+    {
+        using var client = await factory.CreateAuthenticatedClient();
+        var imported = await ImportAndCommit(client, $"PDF{Guid.NewGuid():N}"[..12], 1000m, 200m);
+        var filter = $"grn={imported.GrnNumber}&exact=true";
+        using var grouped = JsonDocument.Parse(await client.GetStringAsync($"/api/labels/print-groups?{filter}"));
+        Assert.Equal(1, grouped.RootElement.GetProperty("total").GetInt32());
+        var group = grouped.RootElement.GetProperty("rows")[0];
+        Assert.Equal(5, group.GetProperty("labelCount").GetInt32());
+        Assert.Equal(1000m, group.GetProperty("quantity").GetDecimal());
+        using var selection = JsonDocument.Parse(await client.GetStringAsync($"/api/labels/print-selection?{filter}"));
+        var labels = selection.RootElement.EnumerateArray().ToArray();
+        Assert.All(labels, label => {
+            Assert.Equal("Inwarded", label.GetProperty("status").GetString());
+            Assert.Equal(label.GetProperty("labelUid").GetString(), label.GetProperty("qrPayload").GetString());
+        });
+        var uid = labels[0].GetProperty("labelUid").GetString()!;
+        var pdf = await client.PostAsJsonAsync("/api/labels/pdf", new { labelUids = new[] { uid } });
+        Assert.True(pdf.IsSuccessStatusCode, await pdf.Content.ReadAsStringAsync());
+        using var history = JsonDocument.Parse(await client.GetStringAsync($"/api/labels/print-history?{filter}"));
+        Assert.Equal(1, history.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal(uid, history.RootElement.GetProperty("rows")[0].GetProperty("labelUid").GetString());
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/labels/pdf", new { labelUids = new[] { uid } })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/labels/pdf", new { labelUids = new[] { uid }, reason = "Damaged sticker" })).StatusCode);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TrackGrnDbContext>();
+        var stored = await db.MaterialLabels.SingleAsync(x => x.LabelUid == uid);
+        Assert.Equal(2, stored.PrintCount);
+        Assert.Equal(200m, stored.LabelQuantity);
+        Assert.Equal(1, await db.MaterialTransactions.CountAsync(x => x.LabelId == stored.Id && x.TransactionType == TransactionType.Inward));
+        Assert.Equal(1, await db.MaterialTransactions.CountAsync(x => x.LabelId == stored.Id && x.TransactionType == TransactionType.Reprint));
+        Assert.Equal(5, await db.MaterialLabels.CountAsync(x => x.GrnLine.GrnHeader.GrnNumber == imported.GrnNumber && x.IsActive));
+        using var after = JsonDocument.Parse(await client.GetStringAsync($"/api/labels/print-groups?{filter}"));
+        Assert.Equal(4, after.RootElement.GetProperty("rows")[0].GetProperty("labelCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Group_selection_is_not_truncated_at_two_thousand_labels()
+    {
+        using var client = await factory.CreateAuthenticatedClient();
+        var imported = await ImportAndCommit(client, $"MANY{Guid.NewGuid():N}"[..14], 2001m, 1m);
+        var filter = $"grn={imported.GrnNumber}&exact=true";
+        using var grouped = JsonDocument.Parse(await client.GetStringAsync($"/api/labels/print-groups?{filter}&pageSize=12"));
+        Assert.Equal(1, grouped.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal(2001, grouped.RootElement.GetProperty("rows")[0].GetProperty("labelCount").GetInt32());
+        using var labels = JsonDocument.Parse(await client.GetStringAsync($"/api/labels/print-selection?{filter}"));
+        Assert.Equal(2001, labels.RootElement.GetArrayLength());
+        Assert.Equal(2001, labels.RootElement.EnumerateArray().Select(x => x.GetProperty("labelUid").GetString()).Distinct().Count());
+    }
+
     private static async Task<ImportedRow> ImportAndCommit(HttpClient client, string identity,
         decimal quantity, decimal packing, string? materialNumber = null)
     {
@@ -485,12 +537,19 @@ public sealed class SqlEndToEndTests(SqlTrackGrnFactory factory) : IClassFixture
 
 public sealed class SqlTrackGrnFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
-    private const string ConnectionString =
-        "Server=localhost\\SQLEXPRESS;Database=TrackGRN_IntegrationTests;Trusted_Connection=True;TrustServerCertificate=True";
+    private static readonly string ConnectionString =
+        $"Server=localhost\\SQLEXPRESS;Database=TrackGRN_IntegrationTests_{Guid.NewGuid():N};Trusted_Connection=True;TrustServerCertificate=True";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<DbContextOptions<TrackGrnDbContext>>();
+            services.RemoveAll<TrackGrnDbContext>();
+            services.AddDbContext<TrackGrnDbContext>(options => options.UseSqlServer(ConnectionString,
+                sql => sql.EnableRetryOnFailure()));
+        });
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
             new Dictionary<string, string?>
             {

@@ -36,6 +36,43 @@ test("business CSV controls and mapped preview render without UI regressions", a
         mappingTemplates: [{ id: "mapping-1", name: "Default SAP GRN Format", isDefault: true }],
       });
     }
+    if (url.pathname === "/api/imports/inspect") {
+      return json(route, {
+        fileName: "business.csv",
+        extension: ".csv",
+        selectedSheetName: "SAP GRN",
+        selectedHeaderRow: 1,
+        matchedTemplate: null,
+        mapping: {
+          "Gr No": "GRNNumber",
+          "Gr date": "GRNDate",
+          Material: "MaterialNumber",
+          Quantity: "ReceivedQuantity",
+        },
+        fields: ["GRNNumber", "GRNDate", "MaterialNumber", "ReceivedQuantity"].map((key) => ({
+          key,
+          label: key,
+          required: true,
+          aliases: [],
+        })),
+        requiredMapped: 4,
+        requiredTotal: 4,
+        readyForImport: true,
+        sheets: [
+          {
+            name: "SAP GRN",
+            index: 0,
+            rowCount: 2,
+            columnCount: 4,
+            previewTruncated: false,
+            rows: [
+              ["Gr No", "Gr date", "Material", "Quantity"],
+              ["5000515455", "03.08.2025", "M06030952", "1000"],
+            ],
+          },
+        ],
+      });
+    }
     if (url.pathname === "/api/imports/preview") {
       return json(route, {
         batch: {
@@ -92,16 +129,16 @@ test("business CSV controls and mapped preview render without UI regressions", a
     mimeType: "application/pdf",
     buffer: Buffer.from("bad"),
   });
-  await expect(page.getByText("Only .xlsx, .csv, .tsv and .txt files are supported")).toBeVisible();
+  await expect(page.getByText("Select an Excel, CSV, TSV or TXT file")).toBeVisible();
   await input.setInputFiles({
     name: "business.csv",
     mimeType: "text/csv",
     buffer: Buffer.from("Gr No,Gr date,Material,Quantity\n5000515455,03.08.2025,M06030952,1000"),
   });
-  await expect(page.getByText("File parsed")).toBeVisible();
+  await expect(page.getByText("Workbook inspected")).toBeVisible();
+  await page.getByRole("button", { name: "Validate Selected Sheet", exact: true }).click();
   await expect(page.getByText("1094852 · Kumar Automates")).toBeVisible();
   await expect(page.getByText("2526KG0208 · Bin 210")).toBeVisible();
-  await expect(page.getByText("5", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Commit Import" }).click();
   await page.getByRole("button", { name: "Commit Import", exact: true }).last().click();
   await expect(page.getByText("Import committed")).toBeVisible();
@@ -239,62 +276,6 @@ async function downloadLabelPdf(preview: Page, path: string, pages: number) {
   return download;
 }
 
-test("single label exports a real PDF offline without printing or inward writes", async ({
-  page,
-  context,
-}, testInfo) => {
-  const writes = await mockPrinting(page);
-  await page.goto("/labels");
-  await page.locator('html[data-hydrated="true"]').waitFor();
-  await expect(
-    page.getByRole("button", { name: "Print & Inward Selected", exact: true }),
-  ).toBeVisible({ timeout: 15_000 });
-  await choosePdf(page);
-  await context.setOffline(true);
-  const popupPromise = context.waitForEvent("page");
-  await page.getByRole("button", { name: "Open Label PDF", exact: true }).click();
-  const preview = await popupPromise;
-  const download = await downloadLabelPdf(preview, testInfo.outputPath("single-label.pdf"), 1);
-  expect(download.suggestedFilename()).toBe(`TrackGRN-${pdfLabels[0]!.labelUid}.pdf`);
-  await page.screenshot({ path: testInfo.outputPath("pdf-output-ui.png"), fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  const exportButton = page.getByRole("button", { name: "Open Label PDF", exact: true });
-  await exportButton.scrollIntoViewIfNeeded();
-  const bounds = await exportButton.boundingBox();
-  expect(bounds!.x).toBeGreaterThanOrEqual(0);
-  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
-  await page.screenshot({ path: testInfo.outputPath("pdf-output-mobile.png"), fullPage: true });
-  expect(writes).toEqual([]);
-});
-
-test("batch PDF exports only the chosen range including previously inwarded labels", async ({
-  page,
-  context,
-}, testInfo) => {
-  const writes = await mockPrinting(page);
-  await page.goto("/labels");
-  await expect(page.getByRole("button", { name: "Batch Print", exact: true })).toBeEnabled();
-  await choosePdf(page);
-  await page.getByRole("button", { name: "Batch PDF", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Batch PDF Preview" })).toBeVisible();
-  await page.getByLabel("From label").fill("2");
-  await page.getByLabel("To label").fill("3");
-  const popupPromise = context.waitForEvent("page");
-  await page.getByRole("button", { name: "Open PDF (2 Labels)", exact: true }).click();
-  await downloadLabelPdf(await popupPromise, testInfo.outputPath("batch-labels.pdf"), 2);
-  expect(writes).toEqual([]);
-});
-
-test("Printer output still dispatches the selected label through the API", async ({ page }) => {
-  const writes = await mockPrinting(page);
-  await page.goto("/labels");
-  await page.getByRole("button", { name: "Print & Inward Selected", exact: true }).click();
-  await expect(page.getByRole("alertdialog")).toBeVisible();
-  await page.getByRole("button", { name: "Print & Inward", exact: true }).last().click();
-  await expect(page.getByText("Label printed and inwarded", { exact: true })).toBeVisible();
-  expect(writes).toEqual([`/api/labels/${pdfLabels[0]!.labelUid}/print`]);
-});
-
 test("Configuration test PDF works without a connected printer", async ({
   page,
   context,
@@ -307,19 +288,5 @@ test("Configuration test PDF works without a connected printer", async ({
   const popupPromise = context.waitForEvent("page");
   await page.getByRole("button", { name: "Open Test PDF", exact: true }).click();
   await downloadLabelPdf(await popupPromise, testInfo.outputPath("test-label.pdf"), 1);
-  expect(writes).toEqual([]);
-});
-
-test("blocked PDF popups show an actionable error without dispatching a print job", async ({
-  page,
-}) => {
-  const writes = await mockPrinting(page);
-  await page.goto("/labels");
-  await choosePdf(page);
-  await page.evaluate(() => {
-    window.open = () => null;
-  });
-  await page.getByRole("button", { name: "Open Label PDF", exact: true }).click();
-  await expect(page.getByText("Allow pop-ups for TrackGRN to open the label PDF.")).toBeVisible();
   expect(writes).toEqual([]);
 });

@@ -41,6 +41,7 @@ export function DataTable<T>({
   dense = false,
   state,
   onStateChange,
+  pagination,
 }: {
   rows: T[];
   columns: Column<T>[];
@@ -53,6 +54,7 @@ export function DataTable<T>({
   dense?: boolean;
   state?: DataTableState;
   onStateChange?: (state: DataTableState) => void;
+  pagination?: { page: number; total: number; onPageChange: (page: number) => void };
 }) {
   const [internalState, setInternalState] = useState<DataTableState>({
     query: "",
@@ -73,15 +75,20 @@ export function DataTable<T>({
     setInternalState(next);
     onStateChange?.(next);
     setPage(0);
+    pagination?.onPageChange(0);
   };
   const filtered = useMemo(
-    () => getTableRows(rows, columns, view, searchKeys),
-    [rows, columns, view, searchKeys],
+    () => (pagination ? rows : getTableRows(rows, columns, view, searchKeys)),
+    [rows, columns, view, searchKeys, pagination],
   );
 
-  const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const current = Math.min(page, pages - 1);
-  const slice = filtered.slice(current * pageSize, current * pageSize + pageSize);
+  const total = pagination?.total ?? filtered.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(pagination?.page ?? page, pages - 1);
+  const slice = pagination
+    ? filtered
+    : filtered.slice(current * pageSize, current * pageSize + pageSize);
+  const changePage = pagination?.onPageChange ?? setPage;
 
   return (
     <div
@@ -149,6 +156,7 @@ export function DataTable<T>({
       <div
         data-testid="data-table-scroll"
         className="min-h-0 max-h-[min(46dvh,24rem)] flex-auto overflow-auto overscroll-contain"
+        style={pageSize >= 12 ? { maxHeight: "min(62dvh,40rem)" } : undefined}
       >
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-surface shadow-sm">
@@ -259,14 +267,14 @@ export function DataTable<T>({
       >
         <p className="text-muted-foreground">
           Showing <span className="num text-foreground">{slice.length}</span> of{" "}
-          <span className="num text-foreground">{filtered.length}</span> records
+          <span className="num text-foreground">{total}</span> records
         </p>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
             disabled={current === 0}
-            onClick={() => setPage(current - 1)}
+            onClick={() => changePage(current - 1)}
           >
             Previous
           </Button>
@@ -277,7 +285,7 @@ export function DataTable<T>({
             variant="outline"
             size="sm"
             disabled={current >= pages - 1}
-            onClick={() => setPage(current + 1)}
+            onClick={() => changePage(current + 1)}
           >
             Next
           </Button>

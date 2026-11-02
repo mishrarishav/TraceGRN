@@ -28,7 +28,7 @@ export const navItems: NavItem[] = [
   { label: "Materials", to: "/materials", icon: Boxes, group: "Master Data" },
   { label: "Vendors", to: "/vendors", icon: Building2, group: "Master Data" },
   { label: "SAP GRN Import", to: "/import", icon: Upload, group: "Operations" },
-  { label: "Label Material Inward", to: "/labels", icon: QrCode, group: "Operations" },
+  { label: "Sticker Printing", to: "/labels", icon: QrCode, group: "Operations" },
   { label: "Material Issue", to: "/issue", icon: Forklift, group: "Shop Floor" },
   { label: "Inventory", to: "/inventory", icon: Warehouse, group: "Shop Floor" },
   { label: "Traceability", to: "/traceability", icon: RouteIcon, group: "Shop Floor" },

@@ -42,7 +42,7 @@ test.describe("navigation and operational controls", () => {
     await expect(sidebar.getByRole("link", { name: "Vendors", exact: true })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "SAP GRN Import", exact: true })).toBeVisible();
     await expect(
-      sidebar.getByRole("link", { name: "Label Material Inward", exact: true }),
+      sidebar.getByRole("link", { name: "Sticker Printing", exact: true }),
     ).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "GRNs", exact: true })).toHaveCount(0);
     await expect(sidebar.getByRole("link", { name: "Material Inward", exact: true })).toHaveCount(
@@ -53,13 +53,14 @@ test.describe("navigation and operational controls", () => {
   test("table search, columns, pagination and export controls respond", async ({ page }) => {
     await gotoReady(page, "/labels");
     const table = page.getByRole("table");
+    await page.getByRole("tab", { name: "Reprint History", exact: true }).click();
     await page.getByPlaceholder("Search records…").fill("LBL-00003452");
     await expect(page.getByText("Showing 1 of 1 records")).toBeVisible();
     await expect(table.getByText("LBL-00003452")).toBeVisible();
 
     await page.getByRole("button", { name: "Columns" }).click();
-    await page.getByRole("menuitemcheckbox", { name: "Batch" }).click();
-    await expect(table.getByRole("columnheader", { name: "Batch" })).toBeVisible();
+    await page.getByRole("menuitemcheckbox", { name: "Description" }).click();
+    await expect(table.getByRole("columnheader", { name: "Description" })).toHaveCount(0);
     await page.getByRole("menuitem", { name: "Done", exact: true }).click();
 
     await page.getByRole("button", { name: "Export" }).click();
@@ -110,7 +111,7 @@ test.describe("navigation and operational controls", () => {
     expect(Math.abs((headerAfter?.y ?? 0) - (headerBefore?.y ?? 0))).toBeLessThanOrEqual(2);
     await expect(page.getByTestId("data-table-footer")).toBeVisible();
     await expect(appFooter.getByText("TrackGRN")).toBeVisible();
-    await expect(appFooter.getByText("v1.1.2")).toBeVisible();
+    await expect(appFooter.getByText("v1.2.0")).toBeVisible();
     await expect(appFooter.getByText("Powered by MAHAD GLOBUS INDIA")).toBeVisible();
     const footerBox = await appFooter.boundingBox();
     expect(footerBox).not.toBeNull();
@@ -249,19 +250,18 @@ test.describe("navigation and operational controls", () => {
   test("label material inward opens an exact batch range preview", async ({ page }) => {
     const generated = await createImportedLabel(page.request);
     await gotoReady(page, "/labels");
-    await expect(page.getByRole("heading", { name: "Label Material Inward" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sticker Printing" })).toBeVisible();
     await page.getByPlaceholder("Search records…").fill(generated.labelUid);
-    await page.getByText(generated.labelUid, { exact: true }).first().click();
-    await expect(page.getByRole("button", { name: "Print & Inward Selected" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Print selected part" })).toBeVisible();
     await page.getByPlaceholder("Search records…").clear();
-    await page.getByRole("button", { name: "Batch Print" }).click();
+    await page.getByRole("button", { name: "Print All" }).click();
 
     const preview = page.getByRole("dialog", { name: "Batch Print Preview" });
     await expect(preview).toBeVisible();
-    await expect(preview.getByText(/Printing 1 to \d+ of \d+ eligible labels/)).toBeVisible();
-    await expect(preview.getByRole("columnheader", { name: "Label UID" })).toBeVisible();
+    await expect(preview.getByText(/pending labels.*selected/)).toBeVisible();
+    await expect(preview.getByRole("columnheader", { name: "Label ID" })).toBeVisible();
     await expect(preview.getByRole("columnheader", { name: "Progress" })).toBeVisible();
-    await preview.getByRole("button", { name: "Cancel" }).click();
+    await preview.getByRole("button", { name: "Close", exact: true }).first().click();
   });
 
   test("printer configuration can be saved and tested from the UI", async ({ page }) => {

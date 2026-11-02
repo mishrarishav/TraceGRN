@@ -8,6 +8,8 @@ import type {
   InventoryRow,
   Material,
   MaterialLabel,
+  LabelPrintGroup,
+  PagedRows,
   MaterialTransaction,
   Station,
   TraceResult,
@@ -18,7 +20,7 @@ import { extractLabelUid } from "@/lib/label-scan";
 
 export const API_BASE_URL = import.meta.env["VITE_API_BASE_URL"] || "/api";
 export const PRINT_AGENT_INSTALLER_URL = `${API_BASE_URL.replace(/\/api\/?$/, "")}/downloads/TrackGRN-PrintAgent.msi`;
-export const APP_VERSION = "1.1.2";
+export const APP_VERSION = "1.2.0";
 const ACCESS_TOKEN_KEY = "trackgrn-access-token";
 const REFRESH_TOKEN_KEY = "trackgrn-refresh-token";
 const USER_KEY = "trackgrn-user";
@@ -329,6 +331,25 @@ export const getImportBatches = () => apiRequest<ImportBatch[]>("/imports");
 export const getImportBatch = (id: string) => apiRequest<ImportPreviewResponse>(`/imports/${id}`);
 
 export const getLabels = () => apiRequest<MaterialLabel[]>("/labels?limit=2000");
+export type LabelWorkspaceParameters = Record<string, string | number | boolean | undefined>;
+function labelWorkspaceQuery(parameters: LabelWorkspaceParameters) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(parameters)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
+  return query.toString();
+}
+export const getLabelPrintGroups = (parameters: LabelWorkspaceParameters) =>
+  apiRequest<PagedRows<LabelPrintGroup>>(`/labels/print-groups?${labelWorkspaceQuery(parameters)}`);
+export const getLabelPrintHistory = (parameters: LabelWorkspaceParameters) =>
+  apiRequest<PagedRows<MaterialLabel>>(`/labels/print-history?${labelWorkspaceQuery(parameters)}`);
+export const getLabelPrintSelection = (parameters: LabelWorkspaceParameters) =>
+  apiRequest<MaterialLabel[]>(`/labels/print-selection?${labelWorkspaceQuery(parameters)}`);
+export const recordLabelPdf = (labelUids: string[], reason?: string) =>
+  apiRequest<MaterialLabel[]>("/labels/pdf", {
+    method: "POST",
+    body: JSON.stringify({ labelUids, reason }),
+  });
 export const getRevisions = () => apiRequest<GRNRevision[]>("/revisions");
 export const getInventory = () => apiRequest<InventoryRow[]>("/inventory");
 export const getTransactions = () => apiRequest<MaterialTransaction[]>("/transactions");
@@ -420,10 +441,16 @@ export const issueMaterial = (labelUid: string, stationCode: string) =>
   });
 
 export const printLabel = (labelUid: string, reason?: string, stationCode?: string) =>
-  apiRequest<{ ok: true; printer: string; printCount: number; status: string }>(
-    `/labels/${encodeURIComponent(labelUid)}/print`,
-    { method: "POST", body: JSON.stringify({ reason, stationCode }) },
-  );
+  apiRequest<{
+    ok: true;
+    printer: string;
+    printCount: number;
+    status: string;
+    simulated?: boolean;
+  }>(`/labels/${encodeURIComponent(labelUid)}/print`, {
+    method: "POST",
+    body: JSON.stringify({ reason, stationCode }),
+  });
 export const printLabelBatch = (labelUids: string[], reason = "Batch print") =>
   apiRequest<{ requested: number; results: { labelUid: string; success: boolean }[] }>(
     "/labels/print-batch",

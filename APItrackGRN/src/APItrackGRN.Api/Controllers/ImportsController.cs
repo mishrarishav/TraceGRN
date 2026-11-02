@@ -233,8 +233,8 @@ public sealed class ImportsController(
                     x.ExpiryDate, x.ExpectedLabelCount, x.GrnHeader.VendorCode, x.GrnHeader.VendorName,
                     x.GrnHeader.InvoiceNumber, x.GrnHeader.InvoiceDate,
                     x.Labels.Where(l => l.IsActive && l.LabelStatus == LabelStatus.Issued).Sum(l => (decimal?)l.LabelQuantity) ?? 0,
-                    x.Labels.Any(l => l.IsActive && l.LabelStatus != LabelStatus.Generated
-                        || l.PrintCount > 0 || l.InwardedAt != null || l.IssuedAt != null)))
+                    x.Labels.Any(l => l.PrintCount > 0 || l.IssuedAt != null
+                        || l.IsActive && l.LabelStatus != LabelStatus.Generated && l.LabelStatus != LabelStatus.Inwarded)))
                 .ToListAsync(cancellationToken);
             foreach (var line in found) existing[line.BusinessKeyHash] = line;
         }
@@ -607,7 +607,9 @@ public sealed class ImportsController(
         }
         var excess = total - newQuantity;
         if (excess <= 0) return true;
-        foreach (var label in active.Where(x => x.LabelStatus is LabelStatus.Generated or LabelStatus.Printed))
+        // Auto-inward does not freeze an unprinted pack. A real print or issue does.
+        foreach (var label in active.Where(x => x.PrintCount == 0 && x.IssuedAt == null
+            && x.LabelStatus is LabelStatus.Generated or LabelStatus.Inwarded))
         {
             if (excess <= 0) break;
             if (label.LabelQuantity <= excess)
@@ -618,9 +620,13 @@ public sealed class ImportsController(
                 excess -= label.LabelQuantity;
                 AddTransaction(label, line, TransactionType.Cancel, userId, previousStatus, LabelStatus.Cancelled, "Cancelled by quantity revision");
             }
-            else if (label.LabelStatus == LabelStatus.Generated && label.PrintCount == 0)
+            else
             {
+                var delta = -excess;
                 label.LabelQuantity -= excess;
+                label.QrPayload = label.LabelUid;
+                AddTransaction(label, line, TransactionType.Adjustment, userId, label.LabelStatus,
+                    label.LabelStatus, "Unprinted pack quantity revised", delta);
                 excess = 0;
             }
         }
@@ -634,8 +640,8 @@ public sealed class ImportsController(
         error = null;
         var active = line.Labels.Where(x => x.IsActive && x.LabelStatus != LabelStatus.Cancelled)
             .OrderBy(x => x.SequenceNumber).ToList();
-        if (line.Labels.Any(x => x.PrintCount > 0 || x.InwardedAt != null || x.IssuedAt != null)
-            || active.Any(x => x.LabelStatus != LabelStatus.Generated))
+        if (line.Labels.Any(x => x.PrintCount > 0 || x.IssuedAt != null)
+            || active.Any(x => x.LabelStatus is not (LabelStatus.Generated or LabelStatus.Inwarded)))
         {
             error = "Pack quantity cannot change after a label has been printed or processed.";
             return false;
@@ -646,17 +652,21 @@ public sealed class ImportsController(
         for (var index = 0; index < retained; index++)
         {
             var label = active[index];
+            var delta = desired[index] - label.LabelQuantity;
             label.LabelQuantity = desired[index];
             label.Uom = row.Uom;
             label.QrPayload = LabelIdentity.CreateQrPayload(label.LabelUid, row.GrnNumber,
                 row.MaterialNumber, label.LabelQuantity, row.Uom, row.GrnDate, label.GeneratedAt);
+            if (delta != 0) AddTransaction(label, line, TransactionType.Adjustment, userId,
+                label.LabelStatus, label.LabelStatus, "Unprinted pack resized", delta);
         }
 
         foreach (var label in active.Skip(desired.Count))
         {
+            var previous = label.LabelStatus;
             label.LabelStatus = LabelStatus.Cancelled;
             label.IsActive = false;
-            AddTransaction(label, line, TransactionType.Cancel, userId, LabelStatus.Generated,
+            AddTransaction(label, line, TransactionType.Cancel, userId, previous,
                 LabelStatus.Cancelled, "Cancelled after material master pack quantity changed");
         }
 
@@ -685,22 +695,24 @@ public sealed class ImportsController(
                 LabelQuantity = quantities[index], Uom = row.Uom,
                 QrPayload = LabelIdentity.CreateQrPayload(uid, row.GrnNumber, row.MaterialNumber,
                     quantities[index], row.Uom, row.GrnDate, generatedAt),
-                LabelStatus = LabelStatus.Generated, GeneratedById = userId, GeneratedAt = generatedAt
+                LabelStatus = LabelStatus.Inwarded, GeneratedById = userId, GeneratedAt = generatedAt,
+                InwardedAt = generatedAt, InwardedById = userId
             };
             dbContext.MaterialLabels.Add(label);
             AddTransaction(label, line, TransactionType.LabelGenerated, userId, LabelStatus.Generated, LabelStatus.Generated, "Auto-generated from SAP import");
+            AddTransaction(label, line, TransactionType.Inward, userId, LabelStatus.Generated, LabelStatus.Inwarded, "Automatic inward after label generation");
         }
     }
 
     private void AddTransaction(MaterialLabel label, GrnLine line, TransactionType type, Guid userId,
-        LabelStatus previous, LabelStatus next, string remarks)
+        LabelStatus previous, LabelStatus next, string remarks, decimal? quantity = null)
     {
         var now = DateTimeOffset.UtcNow;
         dbContext.MaterialTransactions.Add(new MaterialTransaction
         {
             TransactionNumber = $"TXN-{type.ToString()[..Math.Min(3, type.ToString().Length)].ToUpperInvariant()}-{now:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}"[..48],
             TransactionType = type, Label = label, GrnLine = line, Material = line.Material,
-            Quantity = label.LabelQuantity, Uom = label.Uom, UserId = userId, Timestamp = now,
+            Quantity = quantity ?? label.LabelQuantity, Uom = label.Uom, UserId = userId, Timestamp = now,
             Remarks = remarks, PreviousStatus = previous, NewStatus = next
         });
     }

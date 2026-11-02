@@ -1,22 +1,12 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertCircle,
-  CheckCircle2,
-  Circle,
-  FileText,
-  Loader2,
-  Printer,
-  QrCode,
-  RefreshCw,
-} from "lucide-react";
+import { CheckCircle2, FileText, Loader2, Printer, QrCode, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/common/PageHeader";
 import { DataTable, type Column } from "@/components/common/DataTable";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { ExportButton } from "@/components/common/ExportButton";
-import { LoadingSkeleton } from "@/components/common/LoadingSkeleton";
 import { QRPreview } from "@/components/common/QRPreview";
 import { PrintOutputSelect, type PrintOutput } from "@/components/common/PrintOutputSelect";
 import { ConfirmationDialog } from "@/components/common/ConfirmationDialog";
@@ -38,371 +28,408 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBranding } from "@/hooks/use-branding";
-import { cn } from "@/lib/utils";
-import { openLabelPdf } from "@/lib/label-pdf";
-import { getTableRows, type DataTableState } from "@/lib/table-data";
-import { getLabels, printLabel } from "@/services/api";
-import type { MaterialLabel } from "@/types";
+import { createLabelPdf, openLabelPdf } from "@/lib/label-pdf";
+import type { DataTableState } from "@/lib/table-data";
+import {
+  getLabelPrintGroups,
+  getLabelPrintHistory,
+  getLabelPrintSelection,
+  printLabel,
+  recordLabelPdf,
+  type LabelWorkspaceParameters,
+} from "@/services/api";
+import type { LabelPrintGroup, MaterialLabel } from "@/types";
 
 export const Route = createFileRoute("/_shell/labels")({
-  head: () => ({
-    meta: [
-      { title: "Label Material Inward — TrackGRN" },
-      {
-        name: "description",
-        content: "Preview, batch print and inward SAP-imported material labels.",
-      },
-      { property: "og:title", content: "Label Material Inward — TrackGRN" },
-      {
-        property: "og:description",
-        content: "Batch print and inward SAP-imported material labels.",
-      },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Sticker Printing - TrackGRN" }] }),
   component: LabelsPage,
 });
-
-type BatchRowState = "queued" | "printing" | "completed" | "failed";
-
-interface BatchRowProgress {
-  state: BatchRowState;
-  message?: string;
-}
-
-function isAwaitingInward(label: MaterialLabel) {
-  return label.status === "Generated" || label.status === "Printed";
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Unexpected printer error";
-}
-
-function labelSearchText(label: MaterialLabel) {
-  return `${label.labelUid} ${label.grnNumber} ${label.materialNumber} ${label.description} ${label.batch} ${label.binSequence}`;
-}
+const emptyView = (): DataTableState => ({ query: "", filters: {}, sort: null });
+const groupKey = (group: LabelPrintGroup) =>
+  JSON.stringify([group.grnNumber, group.materialNumber, group.uom]);
+const canPrint = (label: MaterialLabel) =>
+  label.status !== "Blocked" && label.status !== "Cancelled";
+type ProgressRow = { state: "printing" | "completed" | "failed"; message?: string };
 
 function LabelsPage() {
-  const queryClient = useQueryClient();
+  const client = useQueryClient();
   const { branding } = useBranding();
-  const { data = [], isLoading } = useQuery({ queryKey: ["labels"], queryFn: getLabels });
+  const [tab, setTab] = useState("pending");
+  const [view, setView] = useState<DataTableState>(emptyView);
+  const [page, setPage] = useState(0);
   const [status, setStatus] = useState("All");
-  const [tableState, setTableState] = useState<DataTableState>({
-    query: "",
-    filters: {},
-    sort: null,
-  });
-  const [selected, setSelected] = useState<MaterialLabel | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<string>();
+  const [selectedUid, setSelectedUid] = useState<string>();
+  const [output, setOutput] = useState<PrintOutput>("Printer");
+  const [batch, setBatch] = useState<MaterialLabel[] | null>(null);
+  const [from, setFrom] = useState(1);
+  const [to, setTo] = useState(1);
+  const [progress, setProgress] = useState<Record<string, ProgressRow>>({});
   const [reprint, setReprint] = useState<MaterialLabel | null>(null);
-  const [printOutput, setPrintOutput] = useState<PrintOutput>("Printer");
-  const [batchOpen, setBatchOpen] = useState(false);
-  const [batchSource, setBatchSource] = useState<MaterialLabel[]>([]);
-  const [batchFrom, setBatchFrom] = useState(1);
-  const [batchTo, setBatchTo] = useState(1);
-  const [batchProgress, setBatchProgress] = useState<Record<string, BatchRowProgress>>({});
-
-  const statusRows = useMemo(
-    () => data.filter((label) => status === "All" || label.status === status),
-    [data, status],
-  );
-  const batchSelection = useMemo(
-    () => batchSource.slice(Math.max(0, batchFrom - 1), Math.max(batchFrom, batchTo)),
-    [batchFrom, batchSource, batchTo],
-  );
-  const batchFinished = batchSelection.filter((label) => {
-    const state = batchProgress[label.labelUid]?.state;
-    return state === "completed" || state === "failed";
-  }).length;
-
-  const updateBatchRow = (labelUid: string, next: BatchRowProgress) => {
-    setBatchProgress((current) => ({ ...current, [labelUid]: next }));
+  const [reason, setReason] = useState("");
+  const parameters: LabelWorkspaceParameters = {
+    page: page + 1,
+    pageSize: 12,
+    search: view.query,
+    grn: view.filters["grn"],
+    material: view.filters["material"],
+    uid: view.filters["uid"],
+    status: tab === "history" ? status : undefined,
+    sort: view.sort?.key,
+    direction: view.sort?.dir,
   };
+  const groupsQuery = useQuery({
+    queryKey: ["label-print-groups", parameters],
+    queryFn: () => getLabelPrintGroups(parameters),
+    enabled: tab === "pending",
+  });
+  const historyQuery = useQuery({
+    queryKey: ["label-print-history", parameters],
+    queryFn: () => getLabelPrintHistory(parameters),
+    enabled: tab === "history",
+  });
+  const groups = groupsQuery.data?.rows ?? [];
+  const history = historyQuery.data?.rows ?? [];
+  const group = groups.find((row) => groupKey(row) === selectedGroup) ?? groups[0];
+  const groupParameters: LabelWorkspaceParameters = {
+    grn: group?.grnNumber,
+    material: group?.materialNumber,
+    uom: group?.uom,
+    exact: true,
+  };
+  const previewQuery = useQuery({
+    queryKey: ["label-print-selection", groupParameters],
+    queryFn: () => getLabelPrintSelection(groupParameters),
+    enabled: tab === "pending" && !!group,
+  });
+  const active =
+    tab === "pending"
+      ? previewQuery.data?.[0]
+      : (history.find((row) => row.labelUid === selectedUid) ?? history[0]);
+  const selection = batch?.slice(from - 1, to) ?? [];
+  const finished = selection.filter((label) =>
+    ["completed", "failed"].includes(progress[label.labelUid]?.state ?? ""),
+  ).length;
+  const invalidate = () =>
+    Promise.all(
+      [
+        "label-print-groups",
+        "label-print-history",
+        "label-print-selection",
+        "labels",
+        "dashboard",
+        "inventory",
+        "transactions",
+        "traceability",
+      ].map((key) => client.invalidateQueries({ queryKey: [key] })),
+    );
 
-  const batchPrint = useMutation({
-    mutationFn: async (labels: MaterialLabel[]) => {
-      let completed = 0;
+  const printing = useMutation({
+    mutationFn: async (job: {
+      labels: MaterialLabel[];
+      output: PrintOutput;
+      popup?: Window | undefined;
+      reason?: string | undefined;
+    }) => {
       let failed = 0;
-
-      for (const label of labels) {
-        updateBatchRow(label.labelUid, { state: "printing" });
+      let simulated = 0;
+      if (job.output === "PDF") {
         try {
-          await printLabel(
-            label.labelUid,
-            label.printCount > 0 ? "Batch reprint before material inward" : undefined,
+          createLabelPdf(job.labels, branding);
+          const recorded = await recordLabelPdf(
+            job.labels.map((label) => label.labelUid),
+            job.reason,
           );
-          updateBatchRow(label.labelUid, { state: "completed" });
-          completed += 1;
+          openLabelPdf(recorded, branding, job.popup);
+          setProgress(
+            Object.fromEntries(recorded.map((label) => [label.labelUid, { state: "completed" }])),
+          );
         } catch (error) {
-          updateBatchRow(label.labelUid, { state: "failed", message: errorMessage(error) });
-          failed += 1;
+          job.popup?.close();
+          throw error;
+        }
+      } else {
+        for (const label of job.labels) {
+          setProgress((rows) => ({ ...rows, [label.labelUid]: { state: "printing" } }));
+          try {
+            const dispatched = await printLabel(label.labelUid, job.reason);
+            if (dispatched.simulated) simulated++;
+            setProgress((rows) => ({
+              ...rows,
+              [label.labelUid]: {
+                state: "completed",
+                ...(dispatched.simulated ? { message: "Simulated" } : {}),
+              },
+            }));
+          } catch (error) {
+            failed++;
+            setProgress((rows) => ({
+              ...rows,
+              [label.labelUid]: {
+                state: "failed",
+                message: error instanceof Error ? error.message : "Printing failed",
+              },
+            }));
+          }
         }
       }
-
-      return { completed, failed, requested: labels.length };
+      return { failed, completed: job.labels.length - failed, output: job.output, simulated };
     },
-    onSuccess: (result) => {
-      void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["labels"] }),
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-        queryClient.invalidateQueries({ queryKey: ["inventory"] }),
-      ]);
-      if (result.failed > 0) {
-        toast.warning("Batch completed with exceptions", {
-          description: `${result.completed} of ${result.requested} labels were printed and inwarded. Review the red rows before retrying.`,
-        });
-      } else {
-        toast.success("Batch print and inward complete", {
-          description: `${result.completed} labels were printed and inwarded successfully.`,
-        });
+    onSuccess: ({ failed, completed, output: completedOutput, simulated }) => {
+      void invalidate();
+      if (failed)
+        toast.warning(`${completed} completed, ${failed} failed. Retry the failed labels.`);
+      else {
+        if (simulated)
+          toast.warning(
+            `${simulated} label(s) simulated. Configure a physical printer for actual stickers.`,
+          );
+        else
+          toast.success(
+            completedOutput === "PDF"
+              ? "Sticker PDF prepared and recorded"
+              : "Labels sent to Zebra printer",
+          );
+        setReprint(null);
       }
     },
+    onError: (error) => {
+      void invalidate();
+      toast.error("Sticker output failed", { description: error.message });
+    },
   });
-
-  const reprintMutation = useMutation({
-    mutationFn: async (label: MaterialLabel) => {
-      const isFirstPrint = label.printCount === 0;
-      const result = await printLabel(
-        label.labelUid,
-        isFirstPrint ? undefined : "Operator-confirmed damaged label reprint",
-      );
-
-      return { result, inwarded: isAwaitingInward(label) };
+  const startOutput = (labels: MaterialLabel[], reprintReason?: string) => {
+    if (!labels.length || labels.length > 500) return;
+    let popup: Window | undefined;
+    if (output === "PDF") {
+      popup = window.open("", "_blank") ?? undefined;
+      if (!popup) {
+        toast.error("Allow pop-ups for TrackGRN to open the sticker PDF.");
+        return;
+      }
+      popup.opener = null;
+      popup.document.body.textContent = "Preparing sticker PDF...";
+    }
+    printing.mutate({ labels, output, popup, reason: reprintReason });
+  };
+  const prepare = useMutation({
+    mutationFn: (options: LabelWorkspaceParameters) => getLabelPrintSelection(options),
+    onSuccess: (labels) => {
+      if (!labels.length) {
+        toast.info("No pending labels match this selection.");
+        return;
+      }
+      printing.reset();
+      setProgress({});
+      setBatch(labels);
+      setFrom(1);
+      setTo(Math.min(500, labels.length));
     },
-    onSuccess: (outcome) => {
-      void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["labels"] }),
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-        queryClient.invalidateQueries({ queryKey: ["inventory"] }),
-      ]);
-      toast.success(outcome.inwarded ? "Label printed and inwarded" : "Reprint sent", {
-        description: `${reprint?.labelUid ?? "Label"} → ${outcome.result.printer}`,
-      });
-      setReprint(null);
-    },
-    onError: (error) => toast.error("Label print failed", { description: error.message }),
+    onError: (error) => toast.error("Could not load labels", { description: error.message }),
   });
-
-  const batchLabels = (output: PrintOutput) =>
-    filtered.filter((label) =>
-      output === "PDF"
-        ? label.status !== "Blocked" && label.status !== "Cancelled"
-        : isAwaitingInward(label),
-    );
-
-  const prepareBatch = (eligible: MaterialLabel[]) => {
-    batchPrint.reset();
-    setBatchSource(eligible);
-    setBatchFrom(1);
-    setBatchTo(eligible.length);
-    setBatchProgress(
-      Object.fromEntries(eligible.map((label) => [label.labelUid, { state: "queued" }])),
-    );
+  const busy = printing.isPending || prepare.isPending;
+  const openReprint = (label: MaterialLabel) => {
+    printing.reset();
+    setProgress({});
+    setReason("");
+    setReprint(label);
   };
-
-  const changePrintOutput = (output: PrintOutput) => {
-    setPrintOutput(output);
-    if (batchOpen) prepareBatch(batchLabels(output));
-  };
-
-  const exportPdf = (labels: MaterialLabel[]) => {
-    try {
-      openLabelPdf(labels, branding);
-      toast.success("Label PDF opened", {
-        description: `${labels.length} label(s) ready to download or print.`,
-      });
-    } catch (error) {
-      toast.error("PDF export failed", { description: errorMessage(error) });
-    }
-  };
-
-  const openLabelOutput = (label: MaterialLabel) => {
-    if (printOutput === "PDF") exportPdf([label]);
-    else setReprint(label);
-  };
-
-  const openBatchPreview = () => {
-    const eligible = batchLabels(printOutput);
-    if (eligible.length === 0) {
-      toast.info(
-        printOutput === "PDF"
-          ? "No labels are available for PDF export in this view."
-          : "No labels are awaiting print and inward in this view.",
-      );
-      return;
-    }
-
-    prepareBatch(eligible);
-    setBatchOpen(true);
-  };
-
-  const columns: Column<MaterialLabel>[] = [
+  function commonColumns<
+    T extends Pick<
+      MaterialLabel,
+      "grnNumber" | "materialNumber" | "description" | "quantity" | "uom"
+    >,
+  >(): Column<T>[] {
+    return [
+      {
+        key: "grn",
+        header: "GRN",
+        sortValue: (row) => row.grnNumber,
+        filterValue: (row) => row.grnNumber,
+        render: (row) => <span className="num whitespace-nowrap">{row.grnNumber}</span>,
+      },
+      {
+        key: "material",
+        header: "Material",
+        sortValue: (row) => row.materialNumber,
+        filterValue: (row) => row.materialNumber,
+        render: (row) => <span className="num whitespace-nowrap">{row.materialNumber}</span>,
+      },
+      {
+        key: "description",
+        header: "Description",
+        render: (row) => (
+          <span className="block max-w-48 truncate" title={row.description}>
+            {row.description}
+          </span>
+        ),
+      },
+      {
+        key: "quantity",
+        header: "Quantity",
+        sortValue: (row) => row.quantity,
+        render: (row) => (
+          <span className="num whitespace-nowrap">
+            {row.quantity} {row.uom}
+          </span>
+        ),
+      },
+    ];
+  }
+  const groupColumns: Column<LabelPrintGroup>[] = [
+    { key: "srNo", header: "Sr. No.", render: (_row, index) => index + 1 },
+    ...commonColumns<LabelPrintGroup>(),
     {
-      key: "uid",
-      header: "Label UID",
-      sortValue: (label) => label.labelUid,
-      filterValue: (label) => label.labelUid,
-      render: (label) => (
-        <span className="num whitespace-nowrap font-semibold text-primary">{label.labelUid}</span>
-      ),
-    },
-    {
-      key: "grn",
-      header: "GRN",
-      sortValue: (label) => label.grnNumber,
-      filterValue: (label) => label.grnNumber,
-      render: (label) => <span className="num whitespace-nowrap">{label.grnNumber}</span>,
-    },
-    {
-      key: "material",
-      header: "Material",
-      sortValue: (label) => label.materialNumber,
-      filterValue: (label) => label.materialNumber,
-      render: (label) => <span className="num whitespace-nowrap">{label.materialNumber}</span>,
-    },
-    {
-      key: "description",
-      header: "Description",
-      sortValue: (label) => label.description,
-      filterValue: (label) => label.description,
-      render: (label) => label.description,
-      className: "max-w-[200px] truncate",
-      hideByDefault: true,
-    },
-    {
-      key: "quantity",
-      header: "Pack Qty",
-      sortValue: (label) => label.quantity,
-      filterValue: (label) => `${label.quantity} ${label.uom}`,
-      render: (label) => (
-        <span className="num whitespace-nowrap">
-          {label.quantity} {label.uom}
-        </span>
-      ),
-    },
-    {
-      key: "batch",
-      header: "Batch",
-      sortValue: (label) => label.batch,
-      filterValue: (label) => label.batch,
-      render: (label) => <span className="num">{label.batch}</span>,
-      hideByDefault: true,
-    },
-    {
-      key: "srNo",
-      header: "Sr. No.",
-      render: (_label, rowIndex) => <span className="num">{rowIndex + 1}</span>,
-    },
-    {
-      key: "sequence",
-      header: "Label No.",
-      sortValue: (label) => Number.parseInt(label.binSequence, 10) || 0,
-      filterValue: (label) => label.binSequence,
-      render: (label) => <span className="num whitespace-nowrap">{label.binSequence}</span>,
-    },
-    {
-      key: "status",
-      header: "Status",
-      sortValue: (label) => label.status,
-      filterValue: (label) => label.status,
-      render: (label) => <StatusBadge status={label.status} />,
+      key: "labels",
+      header: "Labels",
+      sortValue: (row) => row.labelCount,
+      render: (row) => <span className="num">{row.labelCount}</span>,
     },
     {
       key: "actions",
       header: "",
-      render: (label) => {
-        const awaitingInward = isAwaitingInward(label);
-        const isReprint = label.printCount > 0;
-        return (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="gap-1.5 whitespace-nowrap"
-            onClick={(event) => {
-              event.stopPropagation();
-              openLabelOutput(label);
-            }}
-            disabled={label.status === "Blocked" || label.status === "Cancelled"}
-          >
-            {printOutput === "PDF" ? (
-              <FileText className="h-3.5 w-3.5" />
-            ) : isReprint ? (
-              <RefreshCw className="h-3.5 w-3.5" />
-            ) : (
-              <Printer className="h-3.5 w-3.5" />
-            )}
-            {printOutput === "PDF"
-              ? "Open PDF"
-              : awaitingInward
-                ? `${isReprint ? "Reprint" : "Print"} & Inward`
-                : "Reprint"}
-          </Button>
-        );
-      },
+      render: (row) => (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={(event) => {
+            event.stopPropagation();
+            prepare.mutate({
+              grn: row.grnNumber,
+              material: row.materialNumber,
+              uom: row.uom,
+              exact: true,
+            });
+          }}
+        >
+          Print labels
+        </Button>
+      ),
     },
   ];
-
-  const filtered = getTableRows(statusRows, columns, tableState, labelSearchText);
-  const active = selected
-    ? (filtered.find((label) => label.labelUid === selected.labelUid) ?? filtered[0] ?? null)
-    : (filtered[0] ?? null);
+  const historyColumns: Column<MaterialLabel>[] = [
+    {
+      key: "uid",
+      header: "Label ID",
+      sortValue: (row) => row.labelUid,
+      filterValue: (row) => row.labelUid,
+      render: (row) => <span className="num whitespace-nowrap text-primary">{row.labelUid}</span>,
+    },
+    ...commonColumns<MaterialLabel>(),
+    { key: "sequence", header: "Pack", render: (row) => row.binSequence },
+    { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} /> },
+    { key: "count", header: "Print count", render: (row) => row.printCount },
+    {
+      key: "actions",
+      header: "",
+      render: (row) => (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy || !canPrint(row)}
+          onClick={(event) => {
+            event.stopPropagation();
+            openReprint(row);
+          }}
+        >
+          <RefreshCw className="mr-1 h-3.5 w-3.5" />
+          Reprint
+        </Button>
+      ),
+    },
+  ];
+  const query = tab === "pending" ? groupsQuery : historyQuery;
+  const tableProps = {
+    state: view,
+    onStateChange: setView,
+    pageSize: 12,
+    dense: true,
+    pagination: { page, total: query.data?.total ?? 0, onPageChange: setPage },
+  };
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Label Material Inward"
-        description="Print SAP-imported pack labels and inward each completed label in the same flow."
+        title="Sticker Printing"
+        description="Excel upload → Generate & auto-inward → Print sticker → Scan for issue"
         icon={<QrCode className="h-5 w-5" />}
         actions={
           <>
             <ExportButton name="labels" />
-            <Button
-              className="gap-2"
-              onClick={openBatchPreview}
-              disabled={isLoading || batchLabels(printOutput).length === 0}
-            >
-              {printOutput === "PDF" ? (
-                <FileText className="h-4 w-4" />
-              ) : (
-                <Printer className="h-4 w-4" />
-              )}
-              {printOutput === "PDF" ? "Batch PDF" : "Batch Print"}
-            </Button>
+            {tab === "pending" ? (
+              <Button
+                disabled={busy || !groupsQuery.data?.total}
+                onClick={() => prepare.mutate(parameters)}
+              >
+                <Printer className="mr-2 h-4 w-4" />
+                Print All
+              </Button>
+            ) : null}
           </>
         }
       />
-
-      <div className="grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          setTab(value);
+          setView(emptyView());
+          setPage(0);
+          setStatus("All");
+        }}
+      >
+        <TabsList>
+          <TabsTrigger value="pending">Pending Printing</TabsTrigger>
+          <TabsTrigger value="history">Reprint History</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {query.isError ? (
+        <div role="alert" className="panel p-4 text-destructive">
+          Could not load printing records: {query.error.message}
+          <Button variant="outline" className="ml-3" onClick={() => void query.refetch()}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
+      <div className="grid min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="min-w-0">
-          {isLoading ? (
-            <LoadingSkeleton />
+          {query.isLoading ? (
+            <p className="p-8 text-muted-foreground">Loading printing records...</p>
+          ) : tab === "pending" ? (
+            <DataTable
+              key="groups"
+              {...tableProps}
+              rows={groups}
+              columns={groupColumns}
+              searchKeys={(row) => `${row.grnNumber} ${row.materialNumber} ${row.description}`}
+              onRowClick={(row) => setSelectedGroup(groupKey(row))}
+              emptyMessage="All matching labels have been printed. Use Reprint History for an existing sticker."
+            />
           ) : (
             <DataTable
-              rows={statusRows}
-              columns={columns}
-              state={tableState}
-              onStateChange={setTableState}
-              pageSize={6}
-              searchKeys={labelSearchText}
-              onRowClick={setSelected}
-              emptyMessage="No labels match the current filter."
-              dense
+              key="history"
+              {...tableProps}
+              rows={history}
+              columns={historyColumns}
+              searchKeys={(row) => `${row.labelUid} ${row.grnNumber} ${row.materialNumber}`}
+              onRowClick={(row) => setSelectedUid(row.labelUid)}
               toolbar={
-                <Select value={status} onValueChange={setStatus}>
-                  <SelectTrigger aria-label="Label status filter" className="h-9 w-[150px]">
+                <Select
+                  value={status}
+                  onValueChange={(value) => {
+                    setStatus(value);
+                    setPage(0);
+                  }}
+                >
+                  <SelectTrigger aria-label="Label status filter" className="h-9 w-36">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {[
-                      "All",
-                      "Generated",
-                      "Printed",
-                      "Inwarded",
-                      "Issued",
-                      "Blocked",
-                      "Cancelled",
-                    ].map((option) => (
-                      <SelectItem key={option} value={option}>
-                        {option === "All" ? "All statuses" : option}
+                    {["All", "Inwarded", "Issued", "Blocked", "Cancelled"].map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {value === "All" ? "All statuses" : value}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -411,15 +438,11 @@ function LabelsPage() {
             />
           )}
         </div>
-
-        <div className="panel self-start p-3">
-          <div className="mb-2 flex items-start justify-between gap-2">
-            <div>
-              <p className="text-sm font-semibold">Label Preview</p>
-              <p className="text-xs text-muted-foreground">100 × 75 mm thermal transfer</p>
-            </div>
-            {active ? <StatusBadge status={active.status} /> : null}
-          </div>
+        <aside className="panel self-start p-3">
+          <p className="font-semibold">Label Preview</p>
+          <p className="mb-3 text-xs text-muted-foreground">
+            100 × 75 mm · QR contains only Label ID
+          </p>
           {active ? (
             <QRPreview
               label={active}
@@ -429,273 +452,209 @@ function LabelsPage() {
               }}
             />
           ) : (
-            <div className="flex aspect-[4/3] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-              Select a label to preview
-            </div>
+            <p className="py-8 text-sm text-muted-foreground">
+              {previewQuery.isError && tab === "pending"
+                ? "Could not load the selected part's labels."
+                : "Select a part or printed label to preview."}
+            </p>
           )}
           <div className="mt-3">
-            <PrintOutputSelect value={printOutput} onChange={changePrintOutput} />
-            {printOutput === "PDF" ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Opens a PDF in a new window for download or printing. PDF export does not mark
-                labels inward.
-              </p>
-            ) : null}
+            <PrintOutputSelect value={output} onChange={setOutput} disabled={busy} />
           </div>
           <Button
-            type="button"
-            className="mt-3 w-full gap-2"
-            onClick={() => active && openLabelOutput(active)}
-            disabled={!active || active.status === "Blocked" || active.status === "Cancelled"}
+            className="mt-3 w-full"
+            disabled={busy || !active || !canPrint(active)}
+            onClick={() =>
+              tab === "pending" ? prepare.mutate(groupParameters) : active && openReprint(active)
+            }
           >
-            {printOutput === "PDF" ? (
-              <FileText className="h-4 w-4" />
+            {output === "PDF" ? (
+              <FileText className="mr-2 h-4 w-4" />
             ) : (
-              <Printer className="h-4 w-4" />
+              <Printer className="mr-2 h-4 w-4" />
             )}
-            {printOutput === "PDF"
-              ? "Open Label PDF"
-              : active && isAwaitingInward(active)
-                ? `${active.printCount > 0 ? "Reprint" : "Print"} & Inward Selected`
-                : "Reprint Selected Label"}
+            {tab === "pending" ? "Print selected part" : "Reprint selected label"}
           </Button>
-        </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            PDF preparation is recorded in print history. Reprinting keeps the same Label ID and
+            stock quantity.
+          </p>
+        </aside>
       </div>
-
       <Dialog
-        open={batchOpen}
+        open={!!batch}
         onOpenChange={(open) => {
-          if (!open && batchPrint.isPending) return;
-          setBatchOpen(open);
+          if (!open && !printing.isPending) setBatch(null);
         }}
       >
-        <DialogContent className="max-h-[90dvh] max-w-5xl gap-0 overflow-hidden p-0">
-          <DialogHeader className="border-b border-border px-5 py-4 pr-12">
+        <DialogContent className="max-h-[90dvh] max-w-5xl overflow-auto">
+          <DialogHeader>
             <DialogTitle>
-              {printOutput === "PDF" ? "Batch PDF Preview" : "Batch Print Preview"}
+              {output === "PDF" ? "Batch PDF Preview" : "Batch Print Preview"}
             </DialogTitle>
             <DialogDescription>
-              {printOutput === "PDF"
-                ? "Choose the label range to open as a PDF. One label per page; PDF export does not mark labels inward."
-                : "Confirm the exact SAP-imported label range. Each row turns green after print and material inward both complete."}
+              One sticker for each pack. Labels are inwarded automatically. Select up to 500 labels
+              per print run.
             </DialogDescription>
           </DialogHeader>
-
-          <div className="space-y-3 px-5 py-4">
-            <div className="flex flex-wrap items-end gap-3">
-              <PrintOutputSelect
-                value={printOutput}
-                onChange={changePrintOutput}
-                disabled={batchPrint.isPending || batchPrint.isSuccess}
+          <div className="flex flex-wrap items-end gap-3">
+            <PrintOutputSelect value={output} onChange={setOutput} disabled={printing.isPending} />
+            <label className="text-sm">
+              From label
+              <Input
+                aria-label="From label"
+                type="number"
+                min={1}
+                max={batch?.length}
+                value={from}
+                disabled={printing.isPending}
+                className="w-28"
+                onChange={(event) => {
+                  const next = Math.min(
+                    batch?.length ?? 1,
+                    Math.max(1, Number(event.target.value) || 1),
+                  );
+                  setFrom(next);
+                  setTo(Math.min(batch?.length ?? 1, next + 499));
+                  setProgress({});
+                  printing.reset();
+                }}
               />
-              <label className="space-y-1 text-xs font-medium text-muted-foreground">
-                From label
-                <Input
-                  type="number"
-                  min={1}
-                  max={batchSource.length}
-                  value={batchFrom}
-                  disabled={batchPrint.isPending || batchPrint.isSuccess}
-                  onChange={(event) => {
-                    const next = Math.min(
-                      batchSource.length,
-                      Math.max(1, Number(event.target.value) || 1),
-                    );
-                    setBatchFrom(next);
-                    setBatchTo((current) => Math.max(current, next));
-                  }}
-                  className="mt-1 h-9 w-28"
-                />
-              </label>
-              <label className="space-y-1 text-xs font-medium text-muted-foreground">
-                To label
-                <Input
-                  type="number"
-                  min={batchFrom}
-                  max={batchSource.length}
-                  value={batchTo}
-                  disabled={batchPrint.isPending || batchPrint.isSuccess}
-                  onChange={(event) =>
-                    setBatchTo(
-                      Math.min(
-                        batchSource.length,
-                        Math.max(batchFrom, Number(event.target.value) || batchFrom),
-                      ),
-                    )
-                  }
-                  className="mt-1 h-9 w-28"
-                />
-              </label>
-              <div className="pb-2 text-sm text-muted-foreground">
-                {printOutput === "PDF" ? "Exporting" : "Printing"}{" "}
-                <span className="num font-semibold text-foreground">
-                  {batchSource.length ? batchFrom : 0}
-                </span>{" "}
-                to <span className="num font-semibold text-foreground">{batchTo}</span> of{" "}
-                <span className="num font-semibold text-foreground">{batchSource.length}</span>{" "}
-                eligible labels
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Uses all matching table records across pages, in the current sort order.
-              {printOutput === "Printer"
-                ? " Only labels awaiting print and inward are included."
-                : " Blocked and cancelled labels are excluded."}
+            </label>
+            <label className="text-sm">
+              To label
+              <Input
+                aria-label="To label"
+                type="number"
+                min={from}
+                max={Math.min(batch?.length ?? 1, from + 499)}
+                value={to}
+                disabled={printing.isPending}
+                className="w-28"
+                onChange={(event) => {
+                  setTo(
+                    Math.min(
+                      batch?.length ?? 1,
+                      from + 499,
+                      Math.max(from, Number(event.target.value) || from),
+                    ),
+                  );
+                  setProgress({});
+                  printing.reset();
+                }}
+              />
+            </label>
+            <p className="pb-2 text-sm text-muted-foreground">
+              {batch?.length} pending labels · {selection.length} selected
             </p>
-
-            {printOutput === "Printer" ? (
-              <div className="flex items-center gap-3">
-                <Progress
-                  value={batchSelection.length ? (batchFinished / batchSelection.length) * 100 : 0}
-                  className="h-2 flex-1"
-                />
-                <span className="num text-xs text-muted-foreground">
-                  {batchFinished}/{batchSelection.length}
-                </span>
-              </div>
-            ) : null}
-
-            <div className="max-h-[48dvh] overflow-auto rounded-lg border border-border">
-              <table className="w-full min-w-[760px] text-sm">
-                <thead className="sticky top-0 z-10 bg-surface text-left text-xs tracking-wide text-muted-foreground uppercase shadow-sm">
-                  <tr>
-                    <th className="px-3 py-2.5">#</th>
-                    <th className="px-3 py-2.5">Label UID</th>
-                    <th className="px-3 py-2.5">GRN</th>
-                    <th className="px-3 py-2.5">Material</th>
-                    <th className="px-3 py-2.5">Pack Qty</th>
-                    <th className="px-3 py-2.5">{printOutput === "PDF" ? "Status" : "Progress"}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {batchSelection.map((label, index) => {
-                    const rowProgress = batchProgress[label.labelUid] ?? { state: "queued" };
-                    return (
-                      <tr
-                        key={label.labelUid}
-                        className={cn(
-                          "border-t border-border/70 transition-colors",
-                          rowProgress.state === "completed" && "bg-success/20 text-success",
-                          rowProgress.state === "failed" && "bg-destructive/10 text-destructive",
-                          rowProgress.state === "printing" && "bg-primary/10",
-                        )}
-                      >
-                        <td className="num px-3 py-2.5">{batchFrom + index}</td>
-                        <td className="num px-3 py-2.5 font-semibold">{label.labelUid}</td>
-                        <td className="num px-3 py-2.5">{label.grnNumber}</td>
-                        <td className="num px-3 py-2.5">{label.materialNumber}</td>
-                        <td className="num px-3 py-2.5">
-                          {label.quantity} {label.uom}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          {printOutput === "PDF" ? (
-                            <StatusBadge status={label.status} />
-                          ) : (
-                            <BatchStatus progress={rowProgress} />
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
           </div>
-
-          <DialogFooter className="border-t border-border bg-surface/50 px-5 py-3">
-            <Button
-              variant="outline"
-              onClick={() => setBatchOpen(false)}
-              disabled={batchPrint.isPending}
-            >
-              {batchPrint.isSuccess ? "Done" : "Cancel"}
+          {printing.isPending || finished > 0 ? (
+            <Progress value={selection.length ? (finished / selection.length) * 100 : 0} />
+          ) : null}
+          <div className="max-h-[42dvh] overflow-auto rounded-lg border">
+            <table className="w-full min-w-[650px] text-sm">
+              <thead className="sticky top-0 bg-surface">
+                <tr>
+                  {["#", "Label ID", "GRN", "Material", "Pack Qty", "Progress"].map((heading) => (
+                    <th className="p-2 text-left" key={heading}>
+                      {heading}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {selection.map((label, index) => (
+                  <tr key={label.labelUid} className="border-t">
+                    <td className="p-2">{from + index}</td>
+                    <td className="p-2 font-mono text-xs">{label.labelUid}</td>
+                    <td className="p-2">{label.grnNumber}</td>
+                    <td className="p-2">{label.materialNumber}</td>
+                    <td className="p-2">
+                      {label.quantity} {label.uom}
+                    </td>
+                    <td className="p-2">
+                      {progress[label.labelUid]?.state === "completed" ? (
+                        <span className="inline-flex items-center text-success">
+                          <CheckCircle2 className="mr-1 h-4 w-4" />
+                          {progress[label.labelUid]?.message ?? "Completed"}
+                        </span>
+                      ) : progress[label.labelUid]?.state === "failed" ? (
+                        <span className="text-destructive">
+                          {progress[label.labelUid]?.message}
+                        </span>
+                      ) : progress[label.labelUid]?.state === "printing" ? (
+                        "Printing..."
+                      ) : (
+                        "Ready"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {printing.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {printing.error.message}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" disabled={printing.isPending} onClick={() => setBatch(null)}>
+              Close
             </Button>
             <Button
-              className="gap-2"
-              disabled={batchSelection.length === 0 || batchPrint.isPending || batchPrint.isSuccess}
+              disabled={
+                printing.isPending ||
+                !selection.length ||
+                selection.every((label) => progress[label.labelUid]?.state === "completed")
+              }
               onClick={() =>
-                printOutput === "PDF"
-                  ? exportPdf(batchSelection)
-                  : batchPrint.mutate(batchSelection)
+                startOutput(
+                  selection.filter((label) => progress[label.labelUid]?.state !== "completed"),
+                )
               }
             >
-              {batchPrint.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : printOutput === "PDF" ? (
-                <FileText className="h-4 w-4" />
-              ) : (
-                <Printer className="h-4 w-4" />
-              )}
-              {printOutput === "PDF"
-                ? `Open PDF (${batchSelection.length} Labels)`
-                : batchPrint.isPending
-                  ? `Printing ${batchFinished + 1} of ${batchSelection.length}`
-                  : batchPrint.isSuccess
-                    ? "Batch Complete"
-                    : `Print & Inward ${batchSelection.length} Labels`}
+              {printing.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {output === "PDF"
+                ? `Open PDF (${selection.length} Labels)`
+                : finished
+                  ? "Retry failed labels"
+                  : `Print ${selection.length} Labels`}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
       <ConfirmationDialog
+        keepOpen
         open={!!reprint}
         onOpenChange={(open) => {
-          if (!open && !reprintMutation.isPending) setReprint(null);
+          if (!open && !printing.isPending) setReprint(null);
         }}
-        title={
-          printOutput === "PDF"
-            ? "Open this label as PDF?"
-            : reprint && isAwaitingInward(reprint)
-              ? `${reprint.printCount > 0 ? "Reprint" : "Print"} and inward this label?`
-              : "Reprint this label?"
-        }
-        description={
-          printOutput === "PDF"
-            ? "The PDF opens in a new window for download or printing. Exporting does not mark this label inward."
-            : reprint && isAwaitingInward(reprint)
-              ? `Label ${reprint.labelUid} will be sent to the printer and marked inward after printing succeeds.`
-              : `Label ${reprint?.labelUid ?? ""} has been printed ${reprint?.printCount ?? 0} time(s). This reprint is recorded in the audit log.`
-        }
-        confirmLabel={
-          printOutput === "PDF"
-            ? "Open Label PDF"
-            : reprint && isAwaitingInward(reprint)
-              ? `${reprint.printCount > 0 ? "Reprint" : "Print"} & Inward`
-              : "Reprint Label"
-        }
+        title="Reprint this label?"
+        description={`Label ${reprint?.labelUid ?? ""}. The same Label ID will be retained and this output will be audited.`}
+        confirmLabel={printing.isPending ? "Preparing..." : "Reprint Label"}
         onConfirm={() => {
-          if (!reprint) return;
-          if (printOutput === "PDF") {
-            exportPdf([reprint]);
-            setReprint(null);
-          } else reprintMutation.mutate(reprint);
+          if (reprint && !printing.isPending) {
+            if (!reason.trim()) {
+              toast.error("Enter a reason for reprint.");
+              return;
+            }
+            startOutput([reprint], reason.trim());
+          }
         }}
       >
-        <PrintOutputSelect value={printOutput} onChange={changePrintOutput} />
+        <label className="text-sm">
+          Reprint reason
+          <Input
+            aria-label="Reprint reason"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="e.g. Damaged sticker"
+            disabled={printing.isPending}
+          />
+        </label>
+        <PrintOutputSelect value={output} onChange={setOutput} disabled={printing.isPending} />
       </ConfirmationDialog>
-    </div>
-  );
-}
-
-function BatchStatus({ progress }: { progress: BatchRowProgress }) {
-  const content: Record<BatchRowState, { icon: typeof Circle; label: string }> = {
-    queued: { icon: Circle, label: "Queued" },
-    printing: { icon: Loader2, label: "Printing" },
-    completed: { icon: CheckCircle2, label: "Printed & inwarded" },
-    failed: { icon: AlertCircle, label: "Needs attention" },
-  };
-  const { icon: Icon, label } = content[progress.state];
-
-  return (
-    <div>
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-medium">
-        <Icon className={cn("h-4 w-4", progress.state === "printing" && "animate-spin")} />
-        {label}
-      </span>
-      {progress.message ? (
-        <p className="mt-0.5 max-w-64 text-xs leading-snug">{progress.message}</p>
-      ) : null}
     </div>
   );
 }

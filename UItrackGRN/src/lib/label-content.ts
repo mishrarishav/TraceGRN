@@ -13,24 +13,9 @@ export function formatLabelDate(value: string) {
   return `${pad(parsed.getDate())}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getFullYear() % 100)}`;
 }
 
-function formatLabelDateTime(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return `${formatLabelDate(value)}, ${pad(parsed.getHours())}-${pad(parsed.getMinutes())}-${pad(parsed.getSeconds())}`;
-}
-
-/** Preserve the scanner's six-line contract and prefer the API's persisted payload. */
+/** Encode only the durable identifier, including when an old label has a legacy payload. */
 export function labelQrPayload(label: MaterialLabel) {
-  const persisted = label.qrPayload?.trim();
-  if (persisted?.includes("\n") && persisted.includes("Label ID:")) return persisted;
-  return [
-    `GRN Number: ${label.grnNumber}`,
-    `Material: ${label.materialNumber}`,
-    `Quantity: ${label.quantity} ${label.uom}`,
-    `GRN Date: ${formatLabelDate(label.grnDate)}`,
-    `Label Date: ${formatLabelDateTime(label.generatedAt)}`,
-    `Label ID: ${label.labelUid}`,
-  ].join("\n");
+  return label.labelUid.trim().toUpperCase();
 }
 
 export function createTestLabel(): MaterialLabel {
