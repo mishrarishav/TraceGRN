@@ -18,6 +18,7 @@ export function ConfirmationDialog({
   confirmLabel = "Confirm",
   onConfirm,
   children,
+  keepOpen = false,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -26,6 +27,7 @@ export function ConfirmationDialog({
   confirmLabel?: string;
   onConfirm: () => void;
   children?: ReactNode;
+  keepOpen?: boolean;
 }) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -37,7 +39,14 @@ export function ConfirmationDialog({
         {children}
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>{confirmLabel}</AlertDialogAction>
+          <AlertDialogAction
+            onClick={(event) => {
+              if (keepOpen) event.preventDefault();
+              onConfirm();
+            }}
+          >
+            {confirmLabel}
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

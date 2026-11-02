@@ -116,7 +116,7 @@ const initial: FormState = {
     labelSize: "100x75",
     companyName: "TrackGRN Industries",
     qrSize: 160,
-    showBatch: true,
+    showBatch: false,
     showGrnDate: true,
     showDescription: true,
     showBinSequence: true,

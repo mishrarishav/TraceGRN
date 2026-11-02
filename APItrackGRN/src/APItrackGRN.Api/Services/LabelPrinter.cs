@@ -31,7 +31,8 @@ public sealed record LabelPrintJob(
     string Uom,
     int SequenceNumber,
     int SequenceTotal,
-    string? QrPayload = null);
+    string? QrPayload = null,
+    string? GrnDate = null);
 
 public sealed record PrintDispatchResult(string Mode, string Printer, bool Simulated, string Payload);
 
@@ -110,7 +111,7 @@ public sealed class LabelPrinter : ILabelPrinter
         PrinterOptions? configurationOverride = null)
     {
         var options = configurationOverride ?? await GetConfigurationAsync(cancellationToken);
-        var zpl = BuildZpl(job);
+        var zpl = BuildZpl(job, options.Dpi);
         if (string.Equals(options.Mode, "Simulation", StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogInformation("Simulated label print {LabelUid} on {Printer}", job.LabelUid, options.PrinterName);
@@ -208,24 +209,32 @@ public sealed class LabelPrinter : ILabelPrinter
             "Printing mode must be Simulation, RawTcp, WindowsSpooler, or LocalAgent; network modes also require a host.");
     }
 
-    private static string BuildZpl(LabelPrintJob job)
+    private static string BuildZpl(LabelPrintJob job, int dpi)
     {
         static string Clean(string value) => value.Replace("^", string.Empty).Replace("~", string.Empty);
-        static string QrData(string value) => Clean(value)
-            .Replace("\\", "\\5C", StringComparison.Ordinal)
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace("\n", "\\0A", StringComparison.Ordinal);
-        var qrPayload = QrData(job.QrPayload ?? job.LabelUid);
+        dpi = dpi is >= 150 and <= 600 ? dpi : 203;
+        int D(double mm) => (int)Math.Round(mm * dpi / 25.4);
+        int Font(double points) => (int)Math.Round(points * dpi / 72);
+        var qrPayload = Clean(job.LabelUid.Trim().ToUpperInvariant());
+        var quantity = job.Quantity.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+        string Field(string name, string value, int y) =>
+            $"^FO{D(44)},{D(y)}^A0N,{Font(6)},{Font(6)}^FD{name}^FS\n" +
+            $"^FO{D(44)},{D(y + 3.5)}^A0N,{Font(8)},{Font(8)}^FB{D(51)},1,0,L,0^FD{Clean(value)}^FS\n";
         return $"^XA\n" +
-               "^PW812^LL609\n" +
-               $"^FO40,35^A0N,36,36^FDTRACKGRN - MATERIAL LABEL^FS\n" +
-               $"^FO40,135^A0N,28,28^FDMATERIAL: {Clean(job.MaterialNumber)}^FS\n" +
-               $"^FO40,175^A0N,24,24^FD{Clean(job.Description)}^FS\n" +
-               $"^FO40,220^A0N,26,26^FDGRN: {Clean(job.GrnNumber)}  BATCH: {Clean(job.BatchNumber)}^FS\n" +
-               $"^FO40,265^A0N,30,30^FDQTY: {job.Quantity:0.####} {Clean(job.Uom)}^FS\n" +
-               $"^FO40,310^A0N,24,24^FDPACK: {job.SequenceNumber} OF {job.SequenceTotal}^FS\n" +
-               $"^FO520,90^BQN,2,7^FH\\^FDLA,{qrPayload}^FS\n" +
-               "^FO40,570^A0N,20,20^FDMATERIAL TRACEABILITY SYSTEM - SANAND PLANT^FS\n" +
+               $"^CI28^PW{D(100)}^LL{D(75)}^LH0,0\n" +
+               LabelWordmark.Zpl(dpi, D(5), D(5.8)) +
+               $"^FO{D(62)},{D(5)}^A0N,{Font(7)},{Font(7)}^FDMATERIAL LABEL^FS\n" +
+               $"^FO{D(5)},{D(12)}^GB{D(90)},1,1^FS\n" +
+               $"^FO{D(8)},{D(23)}^BQN,2,{Math.Clamp((int)Math.Round(7d * dpi / 203), 1, 10)}^FDLA,{qrPayload}^FS\n" +
+               Field("GRN", job.GrnNumber, 21) +
+               Field("Material", job.MaterialNumber, 29) +
+               Field("Quantity", $"{quantity} {job.Uom}", 37) +
+               Field("GRN Date", job.GrnDate ?? "-", 45) +
+               Field("Pack", $"{job.SequenceNumber:D2} of {job.SequenceTotal}", 53) +
+               $"^FO{D(5)},{D(56)}^A0N,{Font(7)},{Font(7)}^FB{D(34)},3,0,L,0^FD{Clean(job.Description)}^FS\n" +
+               $"^FO{D(5)},{D(65)}^A0N,{Font(6)},{Font(6)}^FDLabel ID: {qrPayload}^FS\n" +
+               $"^FO{D(5)},{D(69)}^GB{D(90)},1,1^FS\n" +
+               $"^FO{D(5)},{D(71)}^A0N,{Font(6)},{Font(6)}^FB{D(90)},1,0,C,0^FDMATERIAL TRACEABILITY SYSTEM - SANAND PLANT^FS\n" +
                "^XZ";
     }
 }

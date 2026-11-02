@@ -10,8 +10,8 @@ export const routes = [
   ["/grns/500515334", "GRN 500515334"],
   ["/materials", "Materials"],
   ["/vendors", "Vendor Master"],
-  ["/labels", "Label Material Inward"],
-  ["/inward", "Label Material Inward"],
+  ["/labels", "Sticker Printing"],
+  ["/inward", "Sticker Printing"],
   ["/issue", "Material Issue"],
   ["/inventory", "Inventory"],
   ["/traceability", "Traceability"],
@@ -185,6 +185,6 @@ export async function createImportedLabel(request: APIRequestContext) {
     status: string;
   }[];
   expect(labels.length).toBeGreaterThan(0);
-  expect(labels[0]?.status).toBe("Generated");
+  expect(labels[0]?.status).toBe("Inwarded");
   return { ...workbook, labelUid: labels[0]!.labelUid, qrPayload: labels[0]!.qrPayload };
 }

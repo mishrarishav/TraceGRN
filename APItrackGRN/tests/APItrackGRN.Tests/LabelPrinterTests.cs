@@ -41,11 +41,14 @@ public sealed class LabelPrinterTests
 
         Assert.True(result.Simulated);
         Assert.Equal("ZDesigner ZD230-203dpi ZPL", result.Printer);
-        Assert.Contains("^PW812^LL609", result.Payload);
-        Assert.Contains("^FDTRACKGRN - MATERIAL LABEL^FS", result.Payload);
+        Assert.Contains("^PW799^LL599", result.Payload);
+        Assert.Contains("^GFA,", result.Payload);
         Assert.Contains("^BQN,2,7", result.Payload);
-        Assert.Contains("GRN Number: 5000515455\\0AMaterial: M06030952", result.Payload);
-        Assert.Contains("^FDPACK: 1 OF 5^FS", result.Payload);
+        Assert.Contains("^FDLA,TEST-TRACKGRN-001^FS", result.Payload);
+        Assert.DoesNotContain("GRN Number:", result.Payload);
+        Assert.DoesNotContain("BATCH", result.Payload);
+        Assert.Contains("^FD01 of 5^FS", result.Payload);
+        Assert.Contains("Label ID: TEST-TRACKGRN-001", result.Payload);
         Assert.Contains("SANAND PLANT", result.Payload);
         Assert.EndsWith("^XZ", result.Payload);
     }
@@ -103,5 +106,23 @@ public sealed class LabelPrinterTests
         Assert.False(result.Simulated);
         Assert.Equal("LocalAgent", result.Mode);
         Assert.Equal("ZDesigner ZD230-203dpi ZPL", result.Printer);
+    }
+
+    [Theory]
+    [InlineData(203, 799, 599)]
+    [InlineData(300, 1181, 886)]
+    public async Task Styled_wordmark_is_a_valid_bounded_printer_graphic(int dpi, int width, int height)
+    {
+        var printer = new LabelPrinter(Options.Create(new PrinterOptions { Mode = "Simulation", Dpi = dpi }), NullLogger<LabelPrinter>.Instance);
+        var result = await printer.PrintAsync(new LabelPrintJob("LBL-123", "M1", "Spring seat", "50001", "", 25, "PC", 1, 3), CancellationToken.None);
+        Assert.Contains($"^PW{width}^LL{height}", result.Payload);
+        var graphic = System.Text.RegularExpressions.Regex.Match(result.Payload, @"\^GFA,(\d+),(\d+),(\d+),([A-F0-9]+)\^FS");
+        Assert.True(graphic.Success);
+        var bytes = int.Parse(graphic.Groups[1].Value);
+        var rowBytes = int.Parse(graphic.Groups[3].Value);
+        Assert.Equal(bytes * 2, graphic.Groups[4].Value.Length);
+        Assert.InRange(rowBytes * 8, 1, width / 3);
+        Assert.InRange(bytes / rowBytes, 1, height / 10);
+        Assert.Contains("^FDLA,LBL-123^FS", result.Payload);
     }
 }

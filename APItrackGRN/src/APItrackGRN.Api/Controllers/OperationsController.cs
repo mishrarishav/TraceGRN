@@ -13,7 +13,7 @@ namespace APItrackGRN.Api.Controllers;
 
 [Authorize]
 [ApiController]
-public sealed class OperationsController(
+public sealed partial class OperationsController(
     TrackGrnDbContext dbContext,
     IRequestContext requestContext,
     IAuditWriter audit,
@@ -33,7 +33,7 @@ public sealed class OperationsController(
         var issued = await labels.Where(x => x.LabelStatus == LabelStatus.Issued).SumAsync(x => (decimal?)x.LabelQuantity, cancellationToken) ?? 0;
         var issuedToday = await labels.Where(x => x.IssuedAt >= DateTimeOffset.UtcNow.Date).SumAsync(x => (decimal?)x.LabelQuantity, cancellationToken) ?? 0;
         var labelCount = await labels.CountAsync(cancellationToken);
-        var pending = await labels.CountAsync(x => x.LabelStatus == LabelStatus.Generated, cancellationToken);
+        var pending = await labels.CountAsync(x => x.PrintCount == 0 && x.LabelStatus != LabelStatus.Cancelled && x.LabelStatus != LabelStatus.Blocked, cancellationToken);
         var warningCount = await todayImports.SumAsync(x => (int?)x.WarningRows + x.RejectedRows, cancellationToken) ?? 0;
         var kpis = new object[]
         {
@@ -199,7 +199,8 @@ public sealed class OperationsController(
                 LabelQuantity = quantities[index], Uom = line.Uom,
                 QrPayload = LabelIdentity.CreateQrPayload(uid, line.GrnHeader.GrnNumber,
                     line.Material.MaterialNumber, quantities[index], line.Uom, line.GrnHeader.GrnDate, now),
-                LabelStatus = LabelStatus.Generated, GeneratedById = requestContext.UserId, GeneratedAt = now
+                LabelStatus = LabelStatus.Inwarded, GeneratedById = requestContext.UserId, GeneratedAt = now,
+                InwardedAt = now, InwardedById = requestContext.UserId
             };
             dbContext.MaterialLabels.Add(label);
             dbContext.MaterialTransactions.Add(new MaterialTransaction
@@ -210,6 +211,7 @@ public sealed class OperationsController(
                 UserId = requestContext.UserId, Timestamp = now, PreviousStatus = LabelStatus.Generated,
                 NewStatus = LabelStatus.Generated, Remarks = request.Remarks ?? "Manual label generation"
             });
+            AddAutoInwardTransaction(label, line, requestContext.UserId, now);
             uids.Add(uid);
         }
         audit.Add("LabelsGenerated", "GrnLine", line.Id.ToString(), newValues: new { Count = uids.Count, Quantity = remaining, Labels = uids });
@@ -265,19 +267,14 @@ public sealed class OperationsController(
             row.LabelQuantity, row.Uom, row.GrnDate, row.GeneratedAt);
         var result = await printer.PrintAsync(new LabelPrintJob(row.LabelUid, row.MaterialNumber, row.Description,
             row.GrnNumber, row.Batch, row.LabelQuantity, row.Uom, row.SequenceNumber, row.SequenceTotal,
-            qrPayload), cancellationToken);
-        var label = await dbContext.MaterialLabels.SingleAsync(x => x.LabelUid == row.LabelUid, cancellationToken);
+            qrPayload, row.GrnDate.ToString("dd-MM-yy")), cancellationToken);
+        var label = await dbContext.MaterialLabels.Include(x => x.GrnLine).SingleAsync(x => x.LabelUid == row.LabelUid, cancellationToken);
         var previousStatus = label.LabelStatus;
         label.QrPayload = qrPayload;
         label.PrintedAt = DateTimeOffset.UtcNow;
         label.LastPrintedById = requestContext.UserId;
         label.PrintCount++;
-        if (label.LabelStatus is LabelStatus.Generated or LabelStatus.Printed)
-        {
-            label.LabelStatus = LabelStatus.Inwarded;
-            label.InwardedAt ??= label.PrintedAt;
-            label.InwardedById ??= requestContext.UserId;
-        }
+        EnsureAutoInward(label, label.GrnLine, label.PrintedAt.Value);
         var transactionType = label.PrintCount == 1 ? TransactionType.LabelPrinted : TransactionType.Reprint;
         dbContext.MaterialTransactions.Add(Transaction(row, transactionType, previousStatus, label.LabelStatus,
             new ScanOperationRequest(labelUid, request.StationCode, request.Reason), null, label.PrintedAt.Value));

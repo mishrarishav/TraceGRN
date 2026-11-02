@@ -23,7 +23,7 @@ async function printAndInwardLabel(page: Page, request: APIRequestContext, label
 }
 
 test.describe("scanner lifecycle", () => {
-  test("legacy inward route opens Label Material Inward without browser randomUUID", async ({
+  test("legacy inward route opens Sticker Printing without browser randomUUID", async ({
     page,
     request,
   }, testInfo) => {
@@ -43,13 +43,14 @@ test.describe("scanner lifecycle", () => {
 
     await gotoReady(page, "/inward");
     await expect(page).toHaveURL(/\/labels\/?$/);
-    await expect(page.getByRole("heading", { name: "Label Material Inward" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sticker Printing" })).toBeVisible();
     await expect(page.getByRole("button", { name: /simulate/i })).toHaveCount(0);
 
     await page.getByPlaceholder("Search records…").fill(labelUid);
-    const labelRow = page.getByRole("row").filter({ hasText: labelUid });
-    await expect(labelRow).toBeVisible();
-    await expect(labelRow).toContainText("Generated");
+    await expect(page.getByText("Showing 1 of 1 records")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Print selected part", exact: true }),
+    ).toBeVisible();
     expect(runtimeErrors).toEqual([]);
   });
 

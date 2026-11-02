@@ -109,7 +109,10 @@ var app = builder.Build();
 if (printerTestMode)
 {
     await using var printerScope = app.Services.CreateAsyncScope();
-    var printer = printerScope.ServiceProvider.GetRequiredService<ILabelPrinter>();
+    // A standalone hardware test must not depend on a reachable application database.
+    var printer = new LabelPrinter(
+        printerScope.ServiceProvider.GetRequiredService<IOptions<PrinterOptions>>(),
+        printerScope.ServiceProvider.GetRequiredService<ILogger<LabelPrinter>>());
     var labelUid = $"TEST-{DateTime.Now:yyyyMMdd-HHmmss}";
     var result = await printer.PrintAsync(new LabelPrintJob(
         labelUid,

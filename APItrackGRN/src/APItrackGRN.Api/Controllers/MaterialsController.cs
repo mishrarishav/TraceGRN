@@ -122,7 +122,7 @@ public sealed class MaterialsController(
         {
             var active = line.Labels.Where(x => x.IsActive && x.LabelStatus != LabelStatus.Cancelled)
                 .OrderBy(x => x.SequenceNumber).ToList();
-            if (line.Labels.Any(x => x.PrintCount > 0 || x.InwardedAt != null || x.IssuedAt != null))
+            if (line.Labels.Any(x => x.PrintCount > 0 || x.IssuedAt != null))
                 continue;
             if (active.Count == 0)
             {
@@ -130,24 +130,28 @@ public sealed class MaterialsController(
                 line.RecordVersion++;
                 continue;
             }
-            if (active.Any(x => x.LabelStatus != LabelStatus.Generated)) continue;
+            if (active.Any(x => x.LabelStatus is not (LabelStatus.Generated or LabelStatus.Inwarded))) continue;
 
             var desired = labelQuantityCalculator.Calculate(line.ReceivedQuantity, packingStandard);
             var retained = Math.Min(active.Count, desired.Count);
             for (var index = 0; index < retained; index++)
             {
                 var label = active[index];
+                var delta = desired[index] - label.LabelQuantity;
                 label.LabelQuantity = desired[index];
                 label.QrPayload = LabelIdentity.CreateQrPayload(label.LabelUid, line.GrnHeader.GrnNumber,
                     materialNumber, label.LabelQuantity, line.Uom, line.GrnHeader.GrnDate,
                     label.GeneratedAt);
+                if (delta != 0) AddLabelTransaction(label, line, TransactionType.Adjustment,
+                    label.LabelStatus, label.LabelStatus, "Unprinted pack resized", delta);
             }
 
             foreach (var label in active.Skip(desired.Count))
             {
+                var previous = label.LabelStatus;
                 label.LabelStatus = LabelStatus.Cancelled;
                 label.IsActive = false;
-                AddLabelTransaction(label, line, TransactionType.Cancel, LabelStatus.Generated,
+                AddLabelTransaction(label, line, TransactionType.Cancel, previous,
                     LabelStatus.Cancelled, "Cancelled after material master pack quantity changed");
             }
 
@@ -170,7 +174,9 @@ public sealed class MaterialsController(
                         QrPayload = LabelIdentity.CreateQrPayload(labelUid, line.GrnHeader.GrnNumber,
                             materialNumber, desired[index], line.Uom, line.GrnHeader.GrnDate,
                             generatedAt),
-                        LabelStatus = LabelStatus.Generated,
+                        LabelStatus = LabelStatus.Inwarded,
+                        InwardedAt = generatedAt,
+                        InwardedById = requestContext.UserId,
                         GeneratedById = requestContext.UserId,
                         GeneratedAt = generatedAt
                     };
@@ -178,6 +184,8 @@ public sealed class MaterialsController(
                     AddLabelTransaction(label, line, TransactionType.LabelGenerated,
                         LabelStatus.Generated, LabelStatus.Generated,
                         "Generated after material master pack quantity changed");
+                    AddLabelTransaction(label, line, TransactionType.Inward,
+                        LabelStatus.Generated, LabelStatus.Inwarded, "Automatic inward after label generation");
                 }
             }
 
@@ -187,7 +195,7 @@ public sealed class MaterialsController(
     }
 
     private void AddLabelTransaction(MaterialLabel label, GrnLine line, TransactionType type,
-        LabelStatus previous, LabelStatus next, string remarks)
+        LabelStatus previous, LabelStatus next, string remarks, decimal? quantity = null)
     {
         var now = DateTimeOffset.UtcNow;
         dbContext.MaterialTransactions.Add(new MaterialTransaction
@@ -197,7 +205,7 @@ public sealed class MaterialsController(
             Label = label,
             GrnLine = line,
             Material = line.Material,
-            Quantity = label.LabelQuantity,
+            Quantity = quantity ?? label.LabelQuantity,
             Uom = label.Uom,
             UserId = requestContext.UserId,
             Timestamp = now,

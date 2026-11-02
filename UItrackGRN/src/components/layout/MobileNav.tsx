@@ -34,7 +34,7 @@ export function MobileNav() {
     >
       <div className="flex items-end">
         {item("/", "Home", Gauge)}
-        {item("/labels", "Inward", QrCode)}
+        {item("/labels", "Print", QrCode)}
         <Link
           to="/issue"
           className="brand-gradient -mt-5 flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl text-primary-foreground shadow-[var(--shadow-float)]"

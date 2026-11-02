@@ -117,6 +117,21 @@ export interface MaterialLabel {
   issuedBy?: string | undefined;
 }
 
+export interface LabelPrintGroup {
+  grnNumber: string;
+  materialNumber: string;
+  description: string;
+  uom: string;
+  quantity: number;
+  labelCount: number;
+  generatedAt: string;
+}
+
+export interface PagedRows<T> {
+  rows: T[];
+  total: number;
+}
+
 export interface ImportRowResult {
   id: string;
   excelRowNumber?: number;

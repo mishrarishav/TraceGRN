@@ -1,6 +1,7 @@
 import { QRCodeSVG } from "qrcode.react";
 import { cn } from "@/lib/utils";
 import { formatLabelDate, labelQrPayload } from "@/lib/label-content";
+import { LABEL_WORDMARK } from "@/lib/label-wordmark";
 import type { MaterialLabel } from "@/types";
 
 export function QRCodeArt({ value, className }: { value: string; className?: string }) {
@@ -41,7 +42,7 @@ export function QRPreview({
 }) {
   const c = {
     companyName: "TrackGRN",
-    showBatch: true,
+    showBatch: false,
     showGrnDate: true,
     showDescription: true,
     showBin: true,
@@ -56,7 +57,11 @@ export function QRPreview({
       )}
     >
       <div className="flex items-center justify-between border-b border-slate-300 pb-1.5">
-        <span className="text-sm font-bold tracking-tight">{c.companyName}</span>
+        {c.companyName === "TrackGRN" ? (
+          <img src={LABEL_WORDMARK} alt="TrackGRN" className="h-auto w-[4.5rem]" />
+        ) : (
+          <span className="text-sm font-bold italic tracking-tight">{c.companyName}</span>
+        )}
         <div className="flex min-w-0 items-center justify-end gap-2">
           {c.brandLogoDataUrl ? (
             <img
@@ -80,11 +85,11 @@ export function QRPreview({
             <p className="truncate text-[9px] text-slate-600">{label.description}</p>
           ) : null}
           <Row k="Qty" v={`${label.quantity.toLocaleString("en-IN")} ${label.uom}`} strong />
-          {c.showBatch ? <Row k="Batch" v={label.batch} /> : null}
           {c.showGrnDate ? <Row k="GRN Date" v={formatLabelDate(label.grnDate)} /> : null}
           {c.showBin ? <Row k="Bin" v={label.binSequence} /> : null}
         </div>
       </div>
+      <p className="mt-2 break-all font-mono text-[9px]">Label ID: {label.labelUid}</p>
       <div className="mt-1.5 border-t border-slate-300 pt-1 text-center font-mono text-[9px] text-slate-500">
         Material Traceability System · Sanand Plant
       </div>

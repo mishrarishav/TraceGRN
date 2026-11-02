@@ -74,10 +74,14 @@ test.describe("business workflows", () => {
   test("label reprint requires confirmation and reports success", async ({ page }, testInfo) => {
     test.skip(desktopOnly(testInfo), "Functional flow runs once in the desktop project.");
     await gotoReady(page, "/labels");
-    await page.getByRole("button", { name: "Reprint" }).first().click();
+    await page.getByRole("tab", { name: "Reprint History", exact: true }).click();
+    await page.getByRole("button", { name: "Reprint", exact: true }).first().click();
     await expect(page.getByRole("alertdialog")).toBeVisible();
+    await page
+      .getByLabel("Reprint reason", { exact: true })
+      .fill("Automated damaged sticker reprint");
     await page.getByRole("button", { name: "Reprint Label" }).click();
-    await expect(page.getByText("Reprint sent")).toBeVisible();
+    await expect(page.getByText(/Labels sent to Zebra printer|label\(s\) simulated/)).toBeVisible();
   });
 
   test("a generated label can be printed from its preview", async ({ page }, testInfo) => {
@@ -85,11 +89,13 @@ test.describe("business workflows", () => {
     const generated = await createImportedLabel(page.request);
     await gotoReady(page, "/labels");
     await page.getByPlaceholder("Search records…").fill(generated.labelUid);
-    await page.getByText(generated.labelUid, { exact: true }).first().click();
-    await page.getByRole("button", { name: "Print & Inward Selected" }).click();
-    await expect(page.getByRole("alertdialog")).toContainText(generated.labelUid);
-    await page.getByRole("button", { name: "Print & Inward", exact: true }).click();
-    await expect(page.getByText("Label printed and inwarded")).toBeVisible();
+    await page.getByRole("button", { name: "Print selected part", exact: true }).click();
+    await expect(page.getByRole("dialog")).toContainText(generated.labelUid);
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Print 1 Labels", exact: true })
+      .click();
+    await expect(page.getByText(/Labels sent to Zebra printer|label\(s\) simulated/)).toBeVisible();
   });
 
   test("theme selection persists after reload", async ({ page }, testInfo) => {

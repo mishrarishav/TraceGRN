@@ -13,20 +13,14 @@ public sealed class LabelIdentityTests
     }
 
     [Fact]
-    public void CreateQrPayload_UsesNewLinesAndRequiredBusinessFields()
+    public void CreateQrPayload_ContainsOnlyTheDurableLabelIdentifier()
     {
         var uid = LabelIdentity.FromId(Guid.Parse("14edc047-b20a-4f4e-aa17-3524e53f5fd2"));
         var payload = LabelIdentity.CreateQrPayload(uid, "500515334", "M1", 200m, "pcs",
             new DateOnly(2026, 8, 27), new DateTimeOffset(2026, 8, 27, 12, 34, 56, TimeSpan.Zero));
 
-        var lines = payload.Split('\n');
-        Assert.Equal(6, lines.Length);
-        Assert.Equal("GRN Number: 500515334", lines[0]);
-        Assert.Equal("Material: M1", lines[1]);
-        Assert.Equal("Quantity: 200 PCS", lines[2]);
-        Assert.Equal("GRN Date: 27-08-26", lines[3]);
-        Assert.StartsWith("Label Date: 27-08-26, ", lines[4]);
-        Assert.Equal($"Label ID: {uid}", lines[5]);
+        Assert.Equal(uid, payload);
+        Assert.DoesNotContain("\n", payload);
     }
 
     [Theory]

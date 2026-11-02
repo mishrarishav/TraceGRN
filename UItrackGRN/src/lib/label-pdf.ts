@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import qrcode from "qrcode-generator";
 import { formatLabelDate, labelQrPayload } from "@/lib/label-content";
+import { LABEL_WORDMARK, LABEL_WORDMARK_MM } from "@/lib/label-wordmark";
 import type { MaterialLabel } from "@/types";
 
 interface LabelPdfBranding {
@@ -34,7 +35,14 @@ export function createLabelPdf(labels: MaterialLabel[], branding: LabelPdfBrandi
     pdf.setLineWidth(0.2);
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(12);
-    pdf.text("TrackGRN", 5, 9);
+    pdf.addImage(
+      LABEL_WORDMARK,
+      "PNG",
+      5,
+      9 - LABEL_WORDMARK_MM.height,
+      LABEL_WORDMARK_MM.width,
+      LABEL_WORDMARK_MM.height,
+    );
     if (branding.clientLogoDataUrl) {
       const image = pdf.getImageProperties(branding.clientLogoDataUrl);
       const scale = Math.min(25 / image.width, 7 / image.height);
@@ -81,8 +89,8 @@ export function createLabelPdf(labels: MaterialLabel[], branding: LabelPdfBrandi
     field("GRN", label.grnNumber);
     field("Material", label.materialNumber, true);
     field("Quantity", `${label.quantity} ${label.uom}`, true);
-    field("Batch", label.batch || "-");
-    field("GRN Date / Pack", `${formatLabelDate(label.grnDate)} / ${label.binSequence}`);
+    field("GRN Date", formatLabelDate(label.grnDate));
+    field("Pack", label.binSequence);
 
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(7);
@@ -101,8 +109,12 @@ export function createLabelPdf(labels: MaterialLabel[], branding: LabelPdfBrandi
 }
 
 /** Open synchronously from the click handler so the browser permits the new window. */
-export function openLabelPdf(labels: MaterialLabel[], branding: LabelPdfBranding = {}) {
-  const preview = window.open("", "_blank");
+export function openLabelPdf(
+  labels: MaterialLabel[],
+  branding: LabelPdfBranding = {},
+  reservedWindow?: Window,
+) {
+  const preview = reservedWindow ?? window.open("", "_blank");
   if (!preview) throw new Error("Allow pop-ups for TrackGRN to open the label PDF.");
   preview.opener = null;
   let objectUrl: string | undefined;

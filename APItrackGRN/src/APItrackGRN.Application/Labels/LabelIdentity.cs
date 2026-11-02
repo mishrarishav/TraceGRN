@@ -1,9 +1,7 @@
-using System.Globalization;
-
 namespace APItrackGRN.Application.Labels;
 
 /// <summary>
-/// Creates the durable label identifier and the human-readable, scanner-friendly QR payload.
+/// Creates the durable label identifier and the identifier-only QR payload.
 /// The label UID is derived from the entity primary key, while SQL Server also enforces a
 /// unique index on LabelUid. This makes the same identifier safe to use for generation,
 /// printing, scanning, issue, and traceability.
@@ -23,14 +21,9 @@ public static class LabelIdentity
         DateOnly grnDate,
         DateTimeOffset labelDate)
     {
-        var localLabelDate = labelDate.ToLocalTime();
-        return string.Join('\n',
-            $"GRN Number: {grnNumber.Trim()}",
-            $"Material: {materialNumber.Trim()}",
-            $"Quantity: {quantity.ToString("0.####", CultureInfo.InvariantCulture)} {uom.Trim().ToUpperInvariant()}",
-            $"GRN Date: {grnDate:dd-MM-yy}",
-            $"Label Date: {localLabelDate:dd-MM-yy, HH-mm-ss}",
-            $"Label ID: {labelUid.Trim().ToUpperInvariant()}");
+        // Business data remains human-readable on the sticker and authoritative in SQL.
+        // Retain the signature for all generation paths and compatibility with old labels.
+        return labelUid.Trim().ToUpperInvariant();
     }
 
     public static string? ExtractUid(string? scannedValue)
