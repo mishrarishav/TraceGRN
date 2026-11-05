@@ -22,6 +22,17 @@ The dashboard provides current GRN, received, available, issue, inward and warni
 
 Press `Ctrl+K` on desktop to focus global search. Enter a label UID, GRN, material or batch and press Enter to open Traceability.
 
+## Material and Vendor bulk upload
+
+1. Open **Materials** or **Vendors** and select **Download Material Template** or **Download Vendor Template**. The same download is available inside **Bulk Upload**.
+2. Fill the **Materials** or **Vendors** worksheet from row 2. Keep the header row unchanged. Dark blue headers are required; the **Instructions** sheet explains every column and gives examples. The data sheet is blank so sample records are never uploaded accidentally.
+3. Keep codes as text to preserve leading zeros. Save as **.xlsx** and upload the saved workbook directly in **Bulk Upload**. Existing CSV files are also accepted. Limit: **2,000 populated rows / 5 MB**.
+4. Review errors and the **Create / Update** actions before selecting **Upload valid rows**. Duplicate codes in the file are rejected. Existing codes are updated; new codes are created. Blank optional fields use defaults or clear the prior value.
+
+Material required columns: **Material Number, Description, UOM, Pack Quantity** (greater than zero). Optional: **Part Number, Default Bin, Opening Quantity, Active**. Opening Quantity is a reference value and does not inward stock.
+
+Vendor required columns: **Vendor Code, Vendor Name**. Optional: **Aliases (use | between values), Active**. Separate alternative names with `|`. Active accepts TRUE/FALSE and defaults to TRUE when blank.
+
 ## 3. Import an SAP GRN file
 
 ![SAP import controls](playwright-evidence/02-sap-import-annotated.png)

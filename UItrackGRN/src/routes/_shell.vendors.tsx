@@ -49,10 +49,6 @@ const vendorBulkColumns: BulkUploadColumn[] = [
   { key: "isActive", label: "Active", aliases: ["Is Active", "Status"] },
 ];
 
-const vendorTemplateRows = [
-  ["V1001", "Sample Vendor", "Sample Vendor Pvt Ltd|Sample Industries", "TRUE"],
-];
-
 export const Route = createFileRoute("/_shell/vendors")({
   head: () => ({
     meta: [
@@ -191,9 +187,8 @@ function VendorsPage() {
             <MasterDataBulkUpload
               entityName="Vendor"
               entityNamePlural="Vendors"
-              templateFileName="trackgrn-vendor-master-template.csv"
+              entity="vendors"
               columns={vendorBulkColumns}
-              templateRows={vendorTemplateRows}
               existingIds={existingVendorIds}
               parseRow={parseVendorBulkRow}
               uploadRow={async (request, existingId) => {
@@ -336,18 +331,18 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function parseVendorBulkRow(record: Record<string, string>): BulkRowParseResult<VendorMutation> {
-  const vendorCode = record["vendorCode"].trim().toUpperCase();
-  const vendorName = record["vendorName"].trim();
+  const vendorCode = (record["vendorCode"] ?? "").trim().toUpperCase();
+  const vendorName = (record["vendorName"] ?? "").trim();
   const aliases = Array.from(
     new Map(
-      record["aliases"]
+      (record["aliases"] ?? "")
         .split(/[|,;\n]/)
         .map((alias) => alias.trim())
         .filter((alias) => alias && alias.toLowerCase() !== vendorName.toLowerCase())
         .map((alias) => [alias.toLowerCase(), alias]),
     ).values(),
   );
-  const active = parseVendorActive(record["isActive"]);
+  const active = parseVendorActive(record["isActive"] ?? "");
   const errors: string[] = [];
 
   if (!vendorCode) errors.push("Vendor Code is required.");

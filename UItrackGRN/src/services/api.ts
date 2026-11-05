@@ -20,7 +20,7 @@ import { extractLabelUid } from "@/lib/label-scan";
 
 export const API_BASE_URL = import.meta.env["VITE_API_BASE_URL"] || "/api";
 export const PRINT_AGENT_INSTALLER_URL = `${API_BASE_URL.replace(/\/api\/?$/, "")}/downloads/TrackGRN-PrintAgent.msi`;
-export const APP_VERSION = "1.2.0";
+export const APP_VERSION = "1.2.1";
 const ACCESS_TOKEN_KEY = "trackgrn-access-token";
 const REFRESH_TOKEN_KEY = "trackgrn-refresh-token";
 const USER_KEY = "trackgrn-user";

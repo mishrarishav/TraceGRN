@@ -19,6 +19,11 @@ import {
 } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import {
+  masterDataTemplateUrl,
+  readMasterDataWorkbook,
+  type MasterDataEntity,
+} from "@/lib/master-data-workbook";
 
 export interface BulkUploadColumn {
   key: string;
@@ -36,9 +41,8 @@ export interface BulkRowParseResult<T> {
 interface MasterDataBulkUploadProps<T> {
   entityName: string;
   entityNamePlural: string;
-  templateFileName: string;
+  entity: MasterDataEntity;
   columns: BulkUploadColumn[];
-  templateRows: string[][];
   existingIds: ReadonlyMap<string, string>;
   parseRow: (record: Record<string, string>, rowNumber: number) => BulkRowParseResult<T>;
   uploadRow: (value: T, existingId: string | undefined) => Promise<unknown>;
@@ -60,9 +64,8 @@ interface RowUploadResult {
 export function MasterDataBulkUpload<T>({
   entityName,
   entityNamePlural,
-  templateFileName,
+  entity,
   columns,
-  templateRows,
   existingIds,
   parseRow,
   uploadRow,
@@ -74,6 +77,8 @@ export function MasterDataBulkUpload<T>({
   const [rows, setRows] = useState<ParsedRow<T>[]>([]);
   const [fileError, setFileError] = useState("");
   const [reading, setReading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const fileReadId = useRef(0);
   const [uploading, setUploading] = useState(false);
   const [processed, setProcessed] = useState(0);
   const [uploadResults, setUploadResults] = useState<Record<number, RowUploadResult>>({});
@@ -87,6 +92,7 @@ export function MasterDataBulkUpload<T>({
   ).length;
 
   const reset = () => {
+    fileReadId.current += 1;
     setFileName("");
     setRows([]);
     setFileError("");
@@ -103,34 +109,41 @@ export function MasterDataBulkUpload<T>({
     if (!nextOpen) reset();
   };
 
-  const downloadTemplate = () => {
-    const content = [columns.map((column) => column.label), ...templateRows]
-      .map((row) => row.map(escapeCsvCell).join(","))
-      .join("\r\n");
-    const blob = new Blob(["\uFEFF", content], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = templateFileName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    toast.success(`${entityName} template downloaded`);
+  const downloadTemplate = async () => {
+    setDownloading(true);
+    try {
+      const response = await fetch(masterDataTemplateUrl(entity));
+      if (!response.ok) throw new Error("Unable to download the template. Please try again.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `trackgrn-${entity}-template.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      toast.success(`${entityName} Excel template downloaded`);
+    } catch (error) {
+      toast.error("Template download failed", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const selectFile = async (file: File | undefined) => {
     if (!file) return;
+    const readId = ++fileReadId.current;
     setFileName(file.name);
     setRows([]);
     setFileError("");
     setUploadResults({});
     setProcessed(0);
 
-    if (!file.name.toLowerCase().endsWith(".csv")) {
-      setFileError(
-        "Please upload the completed CSV template. Excel files can be saved as CSV UTF-8.",
-      );
+    const extension = file.name.toLowerCase().split(".").pop();
+    if (!["xlsx", "csv"].includes(extension ?? "")) {
+      setFileError("Please select the completed Excel (.xlsx) template, or a CSV file.");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
@@ -140,17 +153,21 @@ export function MasterDataBulkUpload<T>({
 
     setReading(true);
     try {
-      const csvRows = parseCsv(await file.text());
-      if (csvRows.length < 2) {
-        setFileError("The CSV must contain a header and at least one data row.");
+      const fileRows =
+        extension === "csv"
+          ? parseCsv(await file.text())
+          : await readMasterDataWorkbook(entity, file);
+      if (readId !== fileReadId.current) return;
+      if (fileRows.length < 2) {
+        setFileError("The file must contain a header and at least one data row.");
         return;
       }
-      if (csvRows.length - 1 > 2_000) {
+      if (fileRows.slice(1).filter((row) => row.some((cell) => cell.trim())).length > 2_000) {
         setFileError("A single bulk upload can contain at most 2,000 data rows.");
         return;
       }
 
-      const header = csvRows[0] ?? [];
+      const header = fileRows[0] ?? [];
       const columnIndexes = mapColumnIndexes(header, columns);
       const missing = columns.filter(
         (column) => column.required && columnIndexes[column.key] === undefined,
@@ -164,7 +181,7 @@ export function MasterDataBulkUpload<T>({
         return;
       }
 
-      const parsed = csvRows
+      const parsed = fileRows
         .slice(1)
         .map((cells, index) => ({ cells, rowNumber: index + 2 }))
         .filter(({ cells }) => cells.some((cell) => cell.trim() !== ""))
@@ -183,7 +200,7 @@ export function MasterDataBulkUpload<T>({
         });
 
       if (parsed.length === 0) {
-        setFileError("The CSV does not contain any populated data rows.");
+        setFileError("The file does not contain any populated data rows.");
         return;
       }
 
@@ -201,10 +218,13 @@ export function MasterDataBulkUpload<T>({
         }),
       );
     } catch (error) {
-      setFileError(error instanceof Error ? error.message : "The CSV could not be read.");
+      if (readId === fileReadId.current)
+        setFileError(error instanceof Error ? error.message : "The file could not be read.");
     } finally {
-      setReading(false);
-      if (inputRef.current) inputRef.current.value = "";
+      if (readId === fileReadId.current) {
+        setReading(false);
+        if (inputRef.current) inputRef.current.value = "";
+      }
     }
   };
 
@@ -268,6 +288,19 @@ export function MasterDataBulkUpload<T>({
 
   return (
     <>
+      <Button
+        variant="outline"
+        className="gap-2"
+        onClick={() => void downloadTemplate()}
+        disabled={downloading}
+      >
+        {downloading ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Download className="h-4 w-4" />
+        )}
+        Download {entityName} Template
+      </Button>
       <Button variant="outline" className="gap-2" onClick={() => setOpen(true)}>
         <Upload className="h-4 w-4" /> Bulk Upload
       </Button>
@@ -277,8 +310,8 @@ export function MasterDataBulkUpload<T>({
           <DialogHeader>
             <DialogTitle>Bulk upload {entityNamePlural.toLowerCase()}</DialogTitle>
             <DialogDescription>
-              Download the CSV template, complete it in Excel, then upload it for validation.
-              Existing codes are updated; new codes are created.
+              Download the Excel template, fill its {entityNamePlural} sheet, save and upload it
+              directly. Existing codes are updated; new codes are created.
             </DialogDescription>
           </DialogHeader>
 
@@ -286,7 +319,8 @@ export function MasterDataBulkUpload<T>({
             <button
               type="button"
               className="flex items-center gap-3 rounded-xl border border-border bg-surface p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
-              onClick={downloadTemplate}
+              onClick={() => void downloadTemplate()}
+              disabled={downloading || uploading}
             >
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <Download className="h-5 w-5" />
@@ -294,7 +328,7 @@ export function MasterDataBulkUpload<T>({
               <span>
                 <span className="block text-sm font-semibold">1. Download template</span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
-                  Keep the header row and save as CSV UTF-8.
+                  Excel .xlsx with a blank data sheet and instructions.
                 </span>
               </span>
             </button>
@@ -312,16 +346,17 @@ export function MasterDataBulkUpload<T>({
                 )}
               </span>
               <span className="min-w-0">
-                <span className="block text-sm font-semibold">2. Select completed CSV</span>
+                <span className="block text-sm font-semibold">2. Select completed file</span>
                 <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                  {fileName || "Up to 2,000 rows / 5 MB"}
+                  {fileName || "Excel or CSV · Up to 2,000 rows / 5 MB"}
                 </span>
               </span>
             </button>
             <input
               ref={inputRef}
               type="file"
-              accept=".csv,text/csv"
+              accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+              aria-label={`${entityName} bulk upload file`}
               className="hidden"
               onChange={(event) => void selectFile(event.target.files?.[0])}
             />
@@ -366,7 +401,7 @@ export function MasterDataBulkUpload<T>({
                 <table className="w-full min-w-[680px] text-sm">
                   <thead className="sticky top-0 z-10 bg-muted">
                     <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                      <th className="px-3 py-2 font-medium">CSV Row</th>
+                      <th className="px-3 py-2 font-medium">File Row</th>
                       <th className="px-3 py-2 font-medium">{entityName} Code</th>
                       <th className="px-3 py-2 font-medium">Action</th>
                       <th className="px-3 py-2 font-medium">Validation / Upload Result</th>
@@ -497,10 +532,6 @@ function mapColumnIndexes(headers: string[], columns: BulkUploadColumn[]) {
     if (key && indexes[key] === undefined) indexes[key] = index;
   });
   return indexes;
-}
-
-function escapeCsvCell(value: string) {
-  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 function parseCsv(text: string) {

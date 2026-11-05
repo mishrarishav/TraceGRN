@@ -107,14 +107,47 @@ async function openLabels(page: Page, failOnce = "") {
     await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
   });
   await page.goto("/labels");
+  await page.locator('html[data-hydrated="true"]').waitFor();
   const table = page.getByTestId("data-table");
-  await expect(table.getByTestId("data-table-footer")).toContainText("Showing 12 of 13 records");
+  await expect(table.getByTestId("data-table-footer")).toContainText("Showing 12 of 13 records", {
+    timeout: 15_000,
+  });
   return { labels, writes, searches, table };
 }
 async function choosePdf(page: Page) {
   await page.getByRole("combobox", { name: "Print output", exact: true }).last().click();
   await page.getByRole("option", { name: "PDF", exact: true }).click();
 }
+
+test("search and column filters retain focus through delayed responses in both printing tabs", async ({
+  page,
+}) => {
+  const { labels, writes } = await openLabels(page);
+  labels[0]!.printCount = 1;
+  await page.route("**/api/labels/print-*", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await route.fallback();
+  });
+  for (const tab of ["Pending Printing", "Reprint History"]) {
+    await page.getByRole("tab", { name: tab, exact: true }).click();
+    const table = page.getByTestId("data-table");
+    const search = table.getByPlaceholder("Search records…");
+    await search.click();
+    await page.keyboard.type("PART-01", { delay: 200 });
+    await expect(search).toHaveValue("PART-01");
+    await expect(search).toBeFocused();
+    await expect(table).toContainText("PART-01");
+    await search.fill("");
+    await table.getByRole("button", { name: "Filters", exact: true }).click();
+    const filter = table.getByRole("textbox", { name: "Filter Material", exact: true });
+    await filter.click();
+    await page.keyboard.type("PART-01", { delay: 200 });
+    await expect(filter).toHaveValue("PART-01");
+    await expect(filter).toBeFocused();
+    await expect(table).toContainText("PART-01");
+  }
+  expect(writes).toHaveLength(0);
+});
 
 test("12 grouped rows, server pagination, filtering and UID-only preview", async ({
   page,

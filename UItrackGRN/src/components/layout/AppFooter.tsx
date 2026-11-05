@@ -1,5 +1,6 @@
 import { AppLogo } from "@/components/layout/AppLogo";
 import { useBranding } from "@/hooks/use-branding";
+import { APP_VERSION } from "@/services/api";
 
 export function AppFooter() {
   const { branding } = useBranding();
@@ -12,7 +13,7 @@ export function AppFooter() {
       <div className="flex min-w-0 items-center gap-2">
         <AppLogo compact className="h-5 w-5" />
         <span className="truncate font-semibold text-foreground">TrackGRN</span>
-        <span className="num rounded bg-surface px-1.5 py-0.5">v{branding.version}</span>
+        <span className="num rounded bg-surface px-1.5 py-0.5">v{APP_VERSION}</span>
       </div>
 
       {branding.clientLogoDataUrl || branding.clientName ? (
