@@ -347,6 +347,7 @@ function LabelsPage() {
     onStateChange: setView,
     pageSize: 12,
     dense: true,
+    loading: query.isFetching,
     pagination: { page, total: query.data?.total ?? 0, onPageChange: setPage },
   };
 
@@ -395,9 +396,7 @@ function LabelsPage() {
       ) : null}
       <div className="grid min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="min-w-0">
-          {query.isLoading ? (
-            <p className="p-8 text-muted-foreground">Loading printing records...</p>
-          ) : tab === "pending" ? (
+          {tab === "pending" ? (
             <DataTable
               key="groups"
               {...tableProps}

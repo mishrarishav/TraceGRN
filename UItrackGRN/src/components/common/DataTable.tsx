@@ -42,6 +42,7 @@ export function DataTable<T>({
   state,
   onStateChange,
   pagination,
+  loading = false,
 }: {
   rows: T[];
   columns: Column<T>[];
@@ -55,6 +56,7 @@ export function DataTable<T>({
   state?: DataTableState;
   onStateChange?: (state: DataTableState) => void;
   pagination?: { page: number; total: number; onPageChange: (page: number) => void };
+  loading?: boolean;
 }) {
   const [internalState, setInternalState] = useState<DataTableState>({
     query: "",
@@ -93,6 +95,7 @@ export function DataTable<T>({
   return (
     <div
       data-testid="data-table"
+      aria-busy={loading}
       className="panel flex min-h-0 max-h-[calc(100dvh-10rem)] flex-col overflow-hidden"
     >
       <div className="flex shrink-0 flex-col gap-3 border-b border-border bg-background/95 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -101,6 +104,7 @@ export function DataTable<T>({
             <div className="relative w-full max-w-sm">
               <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
+                aria-label="Search records"
                 value={query}
                 onChange={(e) => {
                   updateView({ ...view, query: e.target.value });
@@ -234,14 +238,24 @@ export function DataTable<T>({
             ) : null}
           </thead>
           <tbody>
-            {slice.length === 0 ? (
+            {loading ? (
+              <tr>
+                <td
+                  colSpan={Math.max(1, visible.length)}
+                  className="p-8 text-center text-muted-foreground"
+                >
+                  <span role="status">Loading records…</span>
+                </td>
+              </tr>
+            ) : null}
+            {!loading && slice.length === 0 ? (
               <tr>
                 <td colSpan={Math.max(1, visible.length)}>
                   <EmptyState title="Nothing to show" description={emptyMessage} />
                 </td>
               </tr>
             ) : null}
-            {slice.map((row, i) => (
+            {(loading ? [] : slice).map((row, i) => (
               <tr
                 key={i}
                 onClick={() => onRowClick?.(row)}
@@ -273,7 +287,7 @@ export function DataTable<T>({
           <Button
             variant="outline"
             size="sm"
-            disabled={current === 0}
+            disabled={loading || current === 0}
             onClick={() => changePage(current - 1)}
           >
             Previous
@@ -284,7 +298,7 @@ export function DataTable<T>({
           <Button
             variant="outline"
             size="sm"
-            disabled={current >= pages - 1}
+            disabled={loading || current >= pages - 1}
             onClick={() => changePage(current + 1)}
           >
             Next

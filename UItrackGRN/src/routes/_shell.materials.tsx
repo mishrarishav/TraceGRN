@@ -57,10 +57,6 @@ const materialBulkColumns: BulkUploadColumn[] = [
   { key: "isActive", label: "Active", aliases: ["Is Active", "Status"] },
 ];
 
-const materialTemplateRows = [
-  ["M1", "Sample material", "PCS", "200", "PART-001", "A-01", "1000", "TRUE"],
-];
-
 export const Route = createFileRoute("/_shell/materials")({
   head: () => ({
     meta: [
@@ -215,9 +211,8 @@ function MaterialsPage() {
             <MasterDataBulkUpload
               entityName="Material"
               entityNamePlural="Materials"
-              templateFileName="trackgrn-material-master-template.csv"
+              entity="materials"
               columns={materialBulkColumns}
-              templateRows={materialTemplateRows}
               existingIds={existingMaterialIds}
               parseRow={parseMaterialBulkRow}
               uploadRow={async (request, existingId) => {
@@ -481,16 +476,16 @@ function Row({ k, v }: { k: string; v: string }) {
 function parseMaterialBulkRow(
   record: Record<string, string>,
 ): BulkRowParseResult<MaterialMutation> {
-  const materialNumber = record["materialNumber"].trim().toUpperCase();
-  const description = record["description"].trim();
-  const uom = record["uom"].trim().toUpperCase();
-  const partNumber = record["partNumber"].trim();
-  const defaultBinLocation = record["defaultBinLocation"].trim();
+  const materialNumber = (record["materialNumber"] ?? "").trim().toUpperCase();
+  const description = (record["description"] ?? "").trim();
+  const uom = (record["uom"] ?? "").trim().toUpperCase();
+  const partNumber = (record["partNumber"] ?? "").trim();
+  const defaultBinLocation = (record["defaultBinLocation"] ?? "").trim();
   const packingStandard = Number(record["packingStandard"]);
-  const openingQuantity = record["openingQuantity"].trim()
+  const openingQuantity = (record["openingQuantity"] ?? "").trim()
     ? Number(record["openingQuantity"])
     : null;
-  const active = parseActive(record["isActive"]);
+  const active = parseActive(record["isActive"] ?? "");
   const errors: string[] = [];
 
   if (!materialNumber) errors.push("Material Number is required.");
